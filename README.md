@@ -78,7 +78,7 @@
 | 渠道 | 文件 |
 | --- | --- |
 | **GitHub Releases**（推荐） | [MYclick-1.0.0-release.apk](https://github.com/mingyu0401/MYclick/releases/latest) |
-| 仓库内直链 | [download/MYclick-1.0.0-release.apk](download/MYclick-1.0.0-release.apk) |
+| 仓库内直链 | [download/MYclick-1.0.0-release.apk](https://github.com/mingyu0401/MYclick/raw/main/download/MYclick-1.0.0-release.apk) |
 
 > 从 v1.0.0 起，**测试与日常使用统一使用 release 包**（复用 debug 签名，可直接覆盖安装）。
 > SHA-256：`7d6ac57f35074c81035e9bdf31cdde7d065c272d5d8cf952fcceb1f9ffbd7265`
