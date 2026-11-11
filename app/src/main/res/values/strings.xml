@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">MYclick · 录屏点击特效</string>
+    <string name="xposed_desc">为 ColorOS 屏幕录制注入 BASpark 风格点击特效（扩散圆 / 双旋转光弧 / 三角火花），替换原生触摸圆点。</string>
+</resources>

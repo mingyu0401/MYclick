@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- 模块自身声明，便于设置页做权限自检；真正加悬浮窗是在被 Hook 的录屏进程里 -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.WRITE_SETTINGS" />
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
+
+    <application
+        android:allowBackup="true"
+        android:icon="@drawable/ic_launcher"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@style/AppTheme">
+
+        <!-- ============ LSPosed 模块声明 ============ -->
+        <meta-data android:name="xposedmodule" android:value="true" />
+        <meta-data android:name="xposeddescription" android:value="@string/xposed_desc" />
+        <meta-data android:name="xposedminversion" android:value="93" />
+        <!-- 推荐作用域：录屏 App + 系统框架（系统框架用于拿全局触摸坐标，详见 README） -->
+        <meta-data android:name="xposedscope" android:resource="@array/xposed_scope" />
+
+        <activity
+            android:name=".ui.SettingsActivity"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:launchMode="singleTop">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- 配置共享：被 Hook 进程通过 ContentResolver.call() 读取 -->
+        <!-- 不加 android:permission：system_server / 录屏进程需要能直接 call 到它 -->
+        <provider
+            android:name=".core.ConfigProvider"
+            android:authorities="com.myclick.config"
+            android:exported="true"
+            android:grantUriPermissions="true" />
+
+        <!-- 被 Hook 进程索要配置的显式广播接收器（ContentProvider 受包可见性限制时的主通道） -->
+        <receiver
+            android:name=".core.ConfigRequestReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.myclick.action.CONFIG_REQUEST" />
+            </intent-filter>
+        </receiver>
+
+        <!-- 开机后把最新配置推送给 system_server（system_server 里访问 ContentProvider 不一定可用） -->
+        <receiver
+            android:name=".core.BootPushReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
+    </application>
+
+</manifest>

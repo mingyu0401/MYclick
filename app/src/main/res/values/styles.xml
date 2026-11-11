@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 全屏纯黑、无 ActionBar；状态栏/导航栏与页面底色一致 -->
+    <style name="AppTheme" parent="android:style/Theme.DeviceDefault.NoActionBar">
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowActionBar">false</item>
+        <item name="android:windowBackground">@color/mc_bg</item>
+        <item name="android:statusBarColor">@color/mc_bg</item>
+        <item name="android:navigationBarColor">@color/mc_bg</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:colorAccent">@color/mc_accent</item>
+        <item name="android:textColorPrimary">@color/mc_text</item>
+        <item name="android:textColorSecondary">@color/mc_text_sub</item>
+    </style>
+</resources>

@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      LSPosed 推荐作用域。
+      com.oplus.screenrecorder : 17.5.4 实测包名（ColorOS / 一加）
+      android                   : 系统框架。必选！全局 ACTION_DOWN 坐标只能从
+                                  system_server 的 InputEventReceiver 监视通道拿到，
+                                  录屏 App 进程自身收不到别的窗口的触摸事件。
+      其余为老版本 / 其它分支的降级探测包名。
+    -->
+    <string-array name="xposed_scope" translatable="false">
+        <item>com.oplus.screenrecorder</item>
+        <item>android</item>
+        <item>com.coloros.screenrecorder</item>
+        <item>com.oppo.screenrecorder</item>
+        <item>com.oneplus.screenrecorder</item>
+        <item>com.android.screenrecorder</item>
+    </string-array>
+
+    <string-array name="theme_modes" translatable="false">
+        <item>跟随系统</item>
+        <item>强制深色</item>
+        <item>强制浅色</item>
+    </string-array>
+
+    <string-array name="touch_sources" translatable="false">
+        <item>自动（系统框架 + 应用内）</item>
+        <item>仅系统框架（全屏点击）</item>
+        <item>仅应用作用域（需勾选所有应用）</item>
+        <item>仅录屏进程本地（调试用）</item>
+    </string-array>
+
+    <string-array name="gate_modes" translatable="false">
+        <item>自动（检测到录屏才显示）</item>
+        <item>始终显示</item>
+    </string-array>
+</resources>

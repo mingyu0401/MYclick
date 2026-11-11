@@ -1,0 +1,319 @@
+<div align="center">
+
+# ✦ MYclick
+
+**把 ColorOS / 一加「屏幕录制」里那个朴素的白色圆点，<br/>换成会扩散、会旋转、会迸出火花的点击特效**
+
+[![Release](https://img.shields.io/badge/Release-v1.0.0-F9A86C?style=flat-square)](https://github.com/mingyu0401/MYclick/releases)
+[![Platform](https://img.shields.io/badge/Platform-Android%2012%2B-3DDC84?style=flat-square)](#-兼容性)
+[![Framework](https://img.shields.io/badge/Framework-LSPosed-647589?style=flat-square)](#-快速开始)
+[![Kotlin](https://img.shields.io/badge/Kotlin-2.2.0-7F52FF?style=flat-square)](#-从源码构建)
+[![License](https://img.shields.io/badge/License-Apache--2.0-blue?style=flat-square)](LICENSE)
+
+[📦 下载 Release APK](https://github.com/mingyu0401/MYclick/releases/latest) ·
+[🚀 快速开始](#-快速开始) ·
+[🧩 工作原理](#-工作原理) ·
+[🐛 提交 Issue](https://github.com/mingyu0401/MYclick/issues)
+
+<br/>
+
+<img src="docs/images/effect-demo.png" width="360" alt="点击特效效果示意图"/>
+
+*效果示意 · 橙色扩散填充圆 + 双旋转光弧 + 三角火花，以实际点击点为圆心*
+
+</div>
+
+---
+
+## ✨ 它做了什么
+
+原版 ColorOS 屏录的「记录屏幕点击」，本质是打开 AOSP 的 `show_touches`，
+由 `system_server` 在合成层画一个白点。MYclick 把这个白点关掉，
+用一层**透明、不可触摸、能被 MediaProjection 捕获**的覆盖层重画一遍：
+
+| | |
+| :--- | :--- |
+| 🎯 **全屏真实坐标** | 从系统框架的 `InputEventReceiver#dispatchInputEvent` 取全局 `ACTION_DOWN`，点任何 App 都有特效，不消费事件 |
+| 🎬 **真的录得进去** | `TYPE_APPLICATION_OVERLAY` + 透明 `SurfaceView`，走 SurfaceFlinger 合成链；**不设 `FLAG_SECURE`**，也**绝不往 AUTO_MIRROR 虚拟屏加窗口** |
+| ⚡ **60fps 零分配** | `Choreographer` 驱动、粒子对象池 + swap-remove、`Paint`/`Path` 复用、`dt` 钳 50ms，无粒子立即停帧清屏 |
+| 🎨 **完全可配** | SCALE、动画速度、深浅主题、8 项调色板、目标包名、触摸来源、显示时机，改完即时广播生效 |
+
+---
+
+## 📸 效果
+
+<div align="center">
+
+| 效果示意 | 真机录屏抽帧（非合成图） |
+| :---: | :---: |
+| <img src="docs/images/effect-demo.png" width="260" alt="效果示意"/> | <img src="docs/images/effect-recorded.png" width="260" alt="真机录屏抽帧"/> |
+| 规格参考 | 橙色扩散圆 + 双段白→淡蓝光弧 + 三角火花 |
+
+</div>
+
+动画规格 1:1 还原：16 帧 ease-out-cubic 扩散圆（`26 × SCALE`）、
+23 帧双光弧（各 `1.1π`、10 段变线宽、白 → 淡蓝/粉）、4 个三角火花（摩擦 0.9、每帧 -0.032 alpha），
+逻辑坐标用 dp，DPR 上限 2x。设置页里的「实时预览」跑的就是同一套 `EffectEngine`。
+
+<details>
+<summary><b>点开看完整规格对照表</b></summary>
+
+| 规格 | 实现 |
+| --- | --- |
+| 扩散圆 0 → `26 × SCALE`（默认 1.4），266ms / 16 帧 | `EffectEngine.BASE_RADIUS` / `CIRCLE_FRAMES`，`ease = 1-(1-p)³` |
+| 填充 alpha 0.4 → 0 | `fillAlpha = 0.4*(1-cp)*255` |
+| 双光弧各 `1.1π`，随机起始偏移 / 角速度 `[0, 0.08, 0.1]` | `ARC_SPAN` / `ROT_SPEEDS` |
+| 弧半径按 `[0,1,1.5,2] × SCALE` 向外扩张，383ms / 23 帧 | `SPREAD_RATES` / `ARC_FRAMES` |
+| 线宽 `weight(t)=min(2-|4(t-0.5)|,1)`，0.4 → 3.3，分 10 段 | `MIN_WIDTH/MAX_WIDTH` / `ARC_SEGMENTS` |
+| 白 `(250,252,252)` → 淡蓝 `(150,210,255)` / 粉 `(224,79,124)` | `Palette.arcStart/arcEnd` 线性插值 |
+| 4 个三角火花，初速 `4.8~6.8 × SCALE`，摩擦 ×0.9 | `SPARKS_PER_TAP` / `FRICTION` |
+| 深色圆 `rgba(249,168,108)`、浅色圆 `rgba(224,122,63)` | `Config.dark*` / `Config.light*`，设置页可改 |
+
+</details>
+
+---
+
+## 📦 下载
+
+| 渠道 | 文件 |
+| --- | --- |
+| **GitHub Releases**（推荐） | [MYclick-1.0.0-release.apk](https://github.com/mingyu0401/MYclick/releases/latest) |
+| 仓库内直链 | [download/MYclick-1.0.0-release.apk](download/MYclick-1.0.0-release.apk) |
+
+> 从 v1.0.0 起，**测试与日常使用统一使用 release 包**（复用 debug 签名，可直接覆盖安装）。
+> SHA-256：`7d6ac57f35074c81035e9bdf31cdde7d065c272d5d8cf952fcceb1f9ffbd7265`
+
+---
+
+## 🚀 快速开始
+
+<details open>
+<summary><b>① 安装</b></summary>
+
+```bash
+adb install -r download/MYclick-1.0.0-release.apk
+adb shell pm list packages -s | grep -i screenrecord   # 确认录屏包名
+```
+
+</details>
+
+<details open>
+<summary><b>② 在 LSPosed 里启用并勾选作用域</b>（最关键的一步）</summary>
+
+打开 **LSPosed 管理器 → 模块 → MYclick**，启用后勾选：
+
+- ✅ `com.oplus.screenrecorder`（屏幕录制；其它分支用设置页里的「探测」确认）
+- ✅ **系统框架 / System Framework (`android`)** ← 全屏点击坐标全靠它
+- ✅ 部分版本还会单列 `system`，一并勾上
+
+> 只勾选录屏 App 是**不会有全屏特效**的——录屏进程本身收不到别的窗口的触摸事件。
+
+已 root 且装了 `lspctl`，也可以命令行完成（真机验证走的就是这条路径）：
+
+```bash
+adb shell su -c 'lspctl module enable --user=0 com.myclick'
+adb shell su -c 'lspctl scope set --user=0 com.myclick android system com.oplus.screenrecorder'
+```
+
+</details>
+
+<details open>
+<summary><b>③ 重启 → 打开设置页 → 开始录屏</b></summary>
+
+1. **重启手机**（Hook 系统框架必须重启；软重启 `kill system_server` 也可以，无线调试会短暂断开）。
+   只更新覆盖层代码时不必重启整机，`adb shell am force-stop com.oplus.screenrecorder` 即可重新加载。
+2. 打开 MYclick 设置页，在「特效」页点一下预览区确认动画，按需要调 SCALE / 调色板。
+3. 用系统快捷磁贴开始录屏，随便点几下，停止后回看视频。建议同时在录屏设置里打开「记录屏幕点击」——
+   它写 `show_touches=1` 是最可靠的「录制开始」信号，本模块会把它钳回 0 以隐藏原生白点。
+
+</details>
+
+排障日志：
+
+```bash
+adb logcat -s LSPosed:V MYclick:V Xposed:V
+adb shell settings get system show_touches     # 录屏中应为 0
+```
+
+ColorOS 会过滤普通 App 的 `android.util.Log`，**优先看 LSPosed 管理器 → 日志 → 模块日志**。
+
+---
+
+## 🧩 工作原理
+
+```mermaid
+flowchart LR
+    A["用户点击任意 App"] --> B["system_server<br/>InputEventReceiver#dispatchInputEvent"]
+    B -->|"显式 setPackage + 前台广播 + nonce"| C["录屏进程<br/>TouchRelayReceiver"]
+    C --> D["主屏透明覆盖层<br/>SurfaceView + Choreographer"]
+    D --> E["SurfaceFlinger 合成"]
+    E --> F["MediaProjection<br/>录进视频"]
+```
+
+**为什么必须 Hook 系统框架？** 对原版 `屏幕录制 17.5.4` 做 Manifest + DEX 逆向后发现：
+
+- 它靠 `Settings.System.putInt(cr, "show_touches", 1)` 打开 AOSP「显示点按操作反馈」，
+  白点由 `InputDispatcher → PointerController / Sprite` 画在合成层，**不在录屏 App 的 View 树里**；
+- DEX 里那句 `Touch ACTION_DOWN rawX:` 只是**录屏悬浮球自己的 `OnTouchListener`**；
+- 全 DEX 没有 `InputEventReceiver` / `InputChannel` / `monitorInput` 引用 —— 该进程没有全局输入通道。
+
+所以原生「Hook 录屏进程拿 ACTION_DOWN」做不到全屏特效。本模块保留它作调试源，
+真正的数据来自系统框架，再用跨进程广播送到录屏进程绘制。
+
+> ⚠️ **绝不往 MediaProjection 的虚拟显示器上 `addView`**。ColorOS 录屏会新建一块
+> `OPLUSScreenRecording` AUTO_MIRROR 虚拟屏（`type VIRTUAL` / `FLAG_PRIVATE` / `touch NONE`）；
+> 一旦给它加窗口，系统就停止镜像主屏，录屏只剩开头几帧然后全黑（音频仍在录）。
+> `isCaptureDisplay()` 用公开 API 过滤虚拟屏，这正是 v1.0.0 修掉的黑屏问题。
+
+<details>
+<summary><b>点开看配置共享、兼容与降级策略</b></summary>
+
+**配置共享四级回退**（结果缓存在内存，渲染热路径不做 IPC）：
+
+1. `ContentProvider.call(content://com.myclick.config/config, "config")`
+2. **显式广播握手（真机主路径）**：被 Hook 进程用 `ComponentName(com.myclick,
+   com.myclick.core.ConfigRequestReceiver)` 发 `ACTION_CONFIG_REQUEST`，模块 App 回推 `ACTION_CONFIG_PUSH`。
+   Android 11+ 包可见性让 system_server / 录屏进程解析不到模块 Provider，而 LSPosed 2.2.1
+   又把模块 SP 重定向到 `/data/misc/apexdata/*/prefs/com.myclick/`，所以必须是 ComponentName 级显式 Intent。
+3. `XSharedPreferences`（仅当文件确实存在时采用，避免默认值覆盖自定义配置）
+4. 内置默认值
+
+**兼容性**：目标包名默认 `com.oplus.screenrecorder`，另有 `coloros / oppo / oneplus / android` 分支，
+`PackageDetector` 运行时用 `pm list packages -s` 探测；`hookAll("dispatchInputEvent")` 按方法名 +
+`MotionEvent` 参数定位，兼容 Android 17 的两参与旧版三参签名；`findClass` 优先用
+`lpparam.classLoader`（`com.android.server.*` 在 SYSTEMSERVERCLASSPATH）；所有回调内部
+`try/catch`，输入分发链不会因为特效异常而中断。
+
+**Root / Shizuku 是可选的**：录屏 App 是系统签名应用、已声明 `SYSTEM_ALERT_WINDOW`，纯 Xposed 就能工作。
+只有 OEM 的 AppOps 策略拒绝悬浮窗时，才需要设置页里的「放行悬浮窗权限」（Shizuku → root 兜底 →
+挂到录屏 App 的全屏 DecorView）。
+
+</details>
+
+---
+
+## 🧭 设置页
+
+三页底部胶囊导航，深色卡片式排布，避免一长条列表：
+
+| 页 | 内容 |
+| --- | --- |
+| **首页** | 版本主卡、Root / LSPosed 状态双卡、设备信息、常用开关、一键推送配置 |
+| **特效** | 实时预览（点一下就出特效）、SCALE / 速度 / 主题 / 触摸来源 / 显示时机、深浅两套调色板 |
+| **关于** | 效果示意图、原理说明、目标包名与探测、工具与仓库链接、排障速查 |
+
+<details>
+<summary>设计参考</summary>
+
+设置页的视觉语言（纯黑底、石板蓝主卡、`#1A1A1A` 分组卡、大标题、底部胶囊导航）参考了
+ONextBox 的深色卡片式布局，仅作样式参考：
+
+<img src="docs/images/ui-reference.jpg" width="240" alt="UI 设计参考"/>
+
+</details>
+
+---
+
+## 🛠 从源码构建
+
+```bash
+# JDK 17+ / Android SDK platform android-36 / build-tools 36+
+export ANDROID_HOME=/path/to/Android/Sdk     # Windows 可写 local.properties
+./gradlew :app:assembleRelease --offline
+# 产物：app/build/outputs/apk/release/app-release.apk
+```
+
+- AGP 9.4.1 **内置 Kotlin 2.2.0**，不要再 apply `org.jetbrains.kotlin.android`；
+  `kotlin-stdlib` 版本必须与内置编译器一致。
+- `app/libs/xposed-api-82.jar` 是 **compileOnly** 桩，运行时由 LSPosed 提供，
+  已验证 APK 内不含 `de/robv/android/xposed/**` 类。
+- 混淆默认关闭（`gradle.properties` 的 `myclick.enableMinify=false`），
+  置 `true` 即启用 `proguard-rules.pro`（Hook 入口、反射目标、配置字段均已 keep）。
+- release 复用 debug 签名，**可直接安装**，不用自己配 keystore。
+- 无 AndroidX / 无第三方运行时依赖，整包约 2.3 MB。
+
+---
+
+## ⚙️ 配置项
+
+| 项 | 默认 | 说明 |
+| --- | --- | --- |
+| 启用特效 | 开 | 热路径实时读取，改后不必重启 |
+| SCALE / 动画速度 | 1.4 / 1.0 | 范围 0.5~3.0 / 0.3~3.0 |
+| 主题 | 跟随系统 | 可强制深色 / 浅色 |
+| 触摸事件来源 | 自动 | 自动 / 仅系统框架 / 仅应用作用域 / 仅录屏进程本地 |
+| 显示时机 | 自动 | 检测到录屏才显示；可设「始终显示」 |
+| 隐藏原生圆点 / DPR 上限 2x | 开 / 开 | 钳 `show_touches=0`；关闭 DPR 上限按真实 density 渲染 |
+| 目标 / 附加包名 | `com.oplus.screenrecorder` | 支持 `pm` 运行时探测 |
+| 调色板 8 项 | 见规格表 | 深色 / 浅色各 4 个 `#RRGGBB` |
+
+---
+
+## ✅ 真机验证
+
+设备：**一加 PLK110 / Android 17 / ColorOS 17 / KernelSU / LSPosed 2.2.1**，
+录屏 App `17.5.4`（targetSdk 37）。用 `adb shell screenrecord` 与 ColorOS 原生录屏两条通道分别录制，
+`ffprobe` 看帧数、抽帧统计亮度与点击点附近的时域帧差，再放大逐帧核对：
+
+| 项目 | 结果 |
+| --- | --- |
+| 特效入镜 | 橙色扩散圆、双段白→淡蓝光弧、4 个三角火花全部录进视频，且以实际点击点为圆心 |
+| 全黑问题 | 修复前 154s 录制只有 **7 帧视频**（音频 7216 帧）；修复后 29.1s/**973 帧**、6.6s/**497 帧**、4.6s/**370 帧**，全程非黑 |
+| 窗口归属 | 录屏期间 `dumpsys window` 只有 `mDisplayId=0` 的一个 `MYclick-FX` 窗口 |
+| 时序 | `ACTION_DOWN → relay（约 2ms）→ overlay`，单次点击只出一次特效，无重影 |
+| 对齐 | 红色十字标记比对，特效中心与点击点重合，约 154px 的 Y 偏移已消除 |
+
+<details>
+<summary><b>排障速查表</b></summary>
+
+| 现象 | 原因 / 处理 |
+| --- | --- |
+| 完全没有特效 | 多半只勾了录屏 App、没勾「系统框架」，或没重启。看模块日志里 `[android] 系统框架触摸源已安装` |
+| 日志里什么都没有 | ColorOS 过滤普通 App 的 `android.util.Log`；改看 LSPosed 模块日志。灭屏 / Dozing 时本来就没有输入事件 |
+| 只有点悬浮球才有特效 | 系统框架 Hook 未生效 |
+| 特效比点击慢半拍 | 隐式广播被放进延迟队列（实测约 500ms）；确认 `setPackage` + `FLAG_RECEIVER_FOREGROUND` |
+| 一次点击画两遍 | `HookGate` 进程级一次性安装 + 40ms/16px 去重；检查是否把额外 App 勾进作用域 |
+| 录屏全黑 / 只有几帧（音频正常） | 覆盖层误挂到 AUTO_MIRROR 虚拟屏。`dumpsys window windows \| grep MYclick-FX` 应只有 `mDisplayId=0` 一个；升级后 `am force-stop com.oplus.screenrecorder` |
+| 特效出现但录屏里没有 | 检查是否被加 `FLAG_SECURE`（本模块不加）、是否用了「仅录制单个 App」模式 |
+| 特效位置偏移 | 窗口 inset；当前用 `setFitInsetsTypes(0)` + `getLocationOnScreen()` 补偿 |
+| 原生白点还在 | `hideNativeDot` 未生效；`adb shell settings put system show_touches 0` 临时验证 |
+
+</details>
+
+---
+
+## 📁 目录结构
+
+```
+MYclick/
+├── download/                       # 可直接安装的 release APK（测试统一用这个）
+├── docs/images/                    # README 用到的效果示意图与验证帧
+├── app/
+│   ├── build.gradle.kts            # compileOnly Xposed API，不打包进 APK
+│   ├── libs/xposed-api-82.jar      # 随工程交付，离线可构建
+│   ├── proguard-rules.pro
+│   └── src/main/
+│       ├── AndroidManifest.xml     # xposedmodule / xposedminversion=93 / xposedscope
+│       ├── assets/xposed_init      # com.myclick.HookEntry
+│       ├── res/                    # 深色主题、导航图标、效果示意图
+│       └── java/com/myclick/
+│           ├── HookEntry.kt                 # LSPosed 入口，运行时动态判定作用域
+│           ├── bridge/                     # HookBridge / XposedBridgeImpl
+│           ├── core/                       # Config / Prefs / Provider / TouchRelay / 状态与诊断
+│           ├── fx/                         # EffectEngine / EffectSurfaceView
+│           ├── hook/                       # 框架 Hook / 录屏运行时 / 中继 / HookGate
+│           ├── overlay/                    # 悬浮窗 + 虚拟屏过滤 + 多显示器
+│           └── ui/                         # SettingsActivity / UiKit / HeroDecorView / 颜色选择
+├── LICENSE
+└── README.md
+```
+
+---
+
+## 📄 许可与说明
+
+[Apache-2.0](LICENSE)。本项目是个人设备增强用途的 LSPosed 模块，
+**不含原厂 APK 的任何代码或资源**；逆向结论仅用于定位 Hook 点。
+
+Hook 系统框架只在 `before` 阶段读事件、不改参数，出错全部吞掉；
+仍建议先备份数据、熟悉自己设备的救砖流程再折腾。

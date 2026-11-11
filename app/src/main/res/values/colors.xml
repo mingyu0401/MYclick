@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- ONextBox 风格深色配色：纯黑底 + #1A1A1A 卡片 + 石板蓝主卡 -->
+    <color name="mc_bg">#FF000000</color>
+    <color name="mc_card">#FF1A1A1A</color>
+    <color name="mc_card_soft">#FF141414</color>
+    <color name="mc_hero">#FF647589</color>
+    <color name="mc_divider">#FF2E2E2E</color>
+    <color name="mc_text">#FFF2F2F2</color>
+    <color name="mc_text_sub">#FF9B9B9B</color>
+    <color name="mc_accent">#FFF9A86C</color>
+    <color name="mc_nav">#FF292929</color>
+    <color name="mc_chip">#FF2A2A2A</color>
+</resources>
