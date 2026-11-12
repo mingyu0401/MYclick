@@ -555,16 +555,6 @@ class SettingsActivity : Activity() {
             )
         )
 
-        box.addView(Ui.sectionLabel(this, "它是怎么工作的"))
-        box.addView(
-            Ui.group(
-                this,
-                Ui.infoRow(this, "① 系统框架取坐标", "Hook InputEventReceiver#dispatchInputEvent，读取全局 ACTION_DOWN 的 rawX / rawY").view,
-                Ui.infoRow(this, "② 广播中继到录屏进程", "显式包名 + FLAG_RECEIVER_FOREGROUND，端到端延迟约 2ms").view,
-                Ui.infoRow(this, "③ 透明覆盖层绘制", "主屏 TYPE_APPLICATION_OVERLAY + SurfaceView + Choreographer，可被 MediaProjection 捕获").view
-            )
-        )
-
         box.addView(Ui.sectionLabel(this, "作用于哪个录屏应用 · 打开时自动识别本机"))
         val targetRow = Ui.editRow(this, "目标包名", config.targetPackage)
         val extraRow = Ui.editRow(this, "附加包名（逗号分隔）", config.extraTargets)
