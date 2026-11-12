@@ -5,6 +5,7 @@ import android.app.AlertDialog
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -59,7 +60,12 @@ class SettingsActivity : Activity() {
         window.statusBarColor = Ui.BG
         window.navigationBarColor = Ui.BG
 
-        val root = FrameLayout(this).apply { setBackgroundColor(Ui.BG) }
+        val root = FrameLayout(this).apply {
+            setBackgroundColor(Ui.BG)
+            // Android 15+ (targetSdk 35+) 默认强制 edge-to-edge，内容会画到状态栏后面。
+            // fitsSystemWindows 让内容避开状态栏/手势区，滚动时文字不再透到状态栏上。
+            fitsSystemWindows = true
+        }
         contentHost = FrameLayout(this)
         root.addView(contentHost, FrameLayout.LayoutParams(Ui.MATCH, Ui.MATCH))
 
@@ -71,6 +77,16 @@ class SettingsActivity : Activity() {
             contentHost.addView(it, FrameLayout.LayoutParams(Ui.MATCH, Ui.MATCH))
         }
 
+        // 底部渐变遮罩：滚动内容在胶囊导航下方淡出，不会从导航底下露出半行文字
+        root.addView(
+            View(this).apply {
+                background = GradientDrawable(
+                    GradientDrawable.Orientation.TOP_BOTTOM,
+                    intArrayOf(Color.TRANSPARENT, Ui.BG, Ui.BG)
+                )
+            },
+            FrameLayout.LayoutParams(Ui.MATCH, dip(112f)).apply { gravity = Gravity.BOTTOM }
+        )
         root.addView(buildNav(), FrameLayout.LayoutParams(dip(300f), dip(64f)).apply {
             gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
             bottomMargin = dip(24f)
@@ -262,7 +278,7 @@ class SettingsActivity : Activity() {
             runOnUiThread {
                 if (isFinishing || isDestroyed) return@runOnUiThread
                 rootView.text = if (hasRoot) "可用 (su)" else "不可用 · 纯 Xposed 也可工作"
-                lspView.text = if (lsposed) "已启用，需重启系统" else "未检测到 · 请检查模块作用域"
+                lspView.text = if (lsposed) "已启用 · 重启生效" else "未检测到 · 请检查作用域"
             }
         }.start()
     }
@@ -377,11 +393,12 @@ class SettingsActivity : Activity() {
             background = Ui.cardBg(this@SettingsActivity, Ui.CARD, 24f)
             outlineProvider = ViewOutlineProvider.BACKGROUND
             clipToOutline = true
-            layoutParams = LinearLayout.LayoutParams(Ui.MATCH, dip(200f))
+            layoutParams = LinearLayout.LayoutParams(Ui.MATCH, dip(240f))
         }
         imageCard.addView(ImageView(this).apply {
             setImageResource(R.drawable.effect_demo)
-            scaleType = ImageView.ScaleType.CENTER_CROP
+            // 原图是 400x400 正方形；CENTER_CROP 会把上下光弧裁掉，改用完整等比显示
+            scaleType = ImageView.ScaleType.FIT_CENTER
             layoutParams = FrameLayout.LayoutParams(Ui.MATCH, Ui.MATCH)
         })
         box.addView(imageCard)

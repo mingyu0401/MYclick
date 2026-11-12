@@ -202,6 +202,22 @@ flowchart LR
 | **特效** | 实时预览（点一下就出特效）、SCALE / 速度 / 主题 / 触摸来源 / 显示时机、深浅两套调色板 |
 | **关于** | 效果示意图、原理说明、目标包名与探测、工具与仓库链接、排障速查 |
 
+<div align="center">
+
+| 首页 | 特效 | 关于 |
+| :---: | :---: | :---: |
+| <img src="docs/images/ui-home.jpg" width="210" alt="设置页首页"/> | <img src="docs/images/ui-fx.jpg" width="210" alt="设置页特效"/> | <img src="docs/images/ui-about.jpg" width="210" alt="设置页关于"/> |
+
+*真机截图 · 一加 PLK110 / Android 17 / ColorOS 17 · release 包*
+
+</div>
+
+「特效」页的预览区与录屏覆盖层共用同一套 `EffectEngine`，点一下就能看到动画（下图为录屏抽帧）：
+
+<div align="center">
+<img src="docs/images/ui-fx-preview.jpg" width="420" alt="设置页实时预览动画抽帧"/>
+</div>
+
 <details>
 <summary>设计参考</summary>
 
@@ -262,6 +278,8 @@ export ANDROID_HOME=/path/to/Android/Sdk     # Windows 可写 local.properties
 | 窗口归属 | 录屏期间 `dumpsys window` 只有 `mDisplayId=0` 的一个 `MYclick-FX` 窗口 |
 | 时序 | `ACTION_DOWN → relay（约 2ms）→ overlay`，单次点击只出一次特效，无重影 |
 | 对齐 | 红色十字标记比对，特效中心与点击点重合，约 154px 的 Y 偏移已消除 |
+| 设置页 UI 回归 | 2026-11-12 装上 `download/` 里的 release 包逐页截图：三页布局正常、示意图完整显示；修掉 Android 15+ 强制 edge-to-edge 导致的状态栏文字重叠、底部内容从导航下透出；实时预览抽帧可见扩散圆、双段光弧、4 个三角火花 |
+| release 包录屏回归 | 同日 ColorOS 原生录屏 **105s / 1317 帧**（HEVC 1080×2354），全程非黑（桌面段 122/156/157、深色页 40/35/30）；4 次点击全部中继成功（`sink=true`、`active=true`），抽帧可见扩散圆、双段淡蓝光弧、4 个三角火花；`dumpsys window` 仍只有 `displayId=0` 一个 `MYclick-FX` |
 
 <details>
 <summary><b>排障速查表</b></summary>
@@ -287,7 +305,7 @@ export ANDROID_HOME=/path/to/Android/Sdk     # Windows 可写 local.properties
 ```
 MYclick/
 ├── download/                       # 可直接安装的 release APK（测试统一用这个）
-├── docs/images/                    # README 用到的效果示意图与验证帧
+├── docs/images/                    # 效果示意图、设置页三页真机截图、预览抽帧与录屏验证帧
 ├── app/
 │   ├── build.gradle.kts            # compileOnly Xposed API，不打包进 APK
 │   ├── libs/xposed-api-82.jar      # 随工程交付，离线可构建
