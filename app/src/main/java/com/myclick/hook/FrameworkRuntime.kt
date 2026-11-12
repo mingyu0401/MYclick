@@ -1,10 +1,14 @@
 package com.myclick.hook
 
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
 import com.myclick.bridge.HookBridge
 import com.myclick.bridge.Phase
 import com.myclick.core.ConfigStore
 import com.myclick.core.Contexts
+import com.myclick.core.TouchBus
+import com.myclick.overlay.OverlayController
 
 /**
  * system_server（LSPosed 作用域里的 "android" / 系统框架）里的运行时。
@@ -19,12 +23,19 @@ object FrameworkRuntime {
     @Volatile
     private var installed = false
 
+    @Volatile
+    private var globalOverlay: OverlayController? = null
+
+    @Volatile
+    private var overlaySetup = false
+
     @Synchronized
     fun install(bridge: HookBridge, classLoader: ClassLoader?) {
         if (installed) return
         installed = true
         ConfigStore.refreshAsync(Contexts.any())
         tryRegister(Contexts.any())
+        setupGlobalOverlay(Contexts.any(), bridge)
 
         // system_server 没有 Application，attachBaseContext 不会触发；
         // 用 AMS.systemReady / SystemServer.startBootstrapServices 抓 mSystemContext。
@@ -56,6 +67,34 @@ object FrameworkRuntime {
         Contexts.offer(context)
         tryRegister(context)
         ConfigStore.refreshAsync(context)
+        setupGlobalOverlay(context, bridge)
+    }
+
+    /**
+     * 「全局生效」的宿主直接放在 system_server 里：它永远在线、拥有系统 UID（不需要
+     * 悬浮窗授权），而且框架输入 Hook 就在同一进程，ACTION_DOWN 可以直接交给
+     * TouchBus，无跨进程广播、无后台启动限制。
+     *
+     * 真机上 ColorOS 会拦截从 system_server 发给普通 App 静态接收器的广播，
+     * 所以模块 App 进程那条路径只作为兜底保留。
+     */
+    private fun setupGlobalOverlay(context: Context?, bridge: HookBridge) {
+        val ctx = context ?: return
+        if (overlaySetup) return
+        overlaySetup = true
+        Handler(Looper.getMainLooper()).post {
+            try {
+                val ctrl = OverlayController(ctx, globalHost = true)
+                globalOverlay = ctrl
+                TouchBus.sink = { ev -> ctrl.onTouch(ev) }
+                ConfigStore.onUpdated = { cfg -> ctrl.updateConfig(cfg) }
+                ctrl.updateConfig(ConfigStore.value)
+                bridge.log("[android] 全局生效宿主已挂载（system_server）")
+            } catch (t: Throwable) {
+                overlaySetup = false
+                bridge.log("[android] 全局生效宿主挂载失败: $t")
+            }
+        }
     }
 
     private fun tryRegister(context: Context?) {

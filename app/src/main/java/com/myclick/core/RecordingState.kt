@@ -25,11 +25,14 @@ object RecordingState {
     }
 
     /**
-     * 是否允许绘制特效：
-     * - `globalEffect`：「全局生效」开关，打开后不再要求录屏进行中；
-     * - `gateMode == GATE_ALWAYS`：旧版「显示时机 → 始终显示」配置，保留兼容；
-     * - 否则只在录屏进行中（active）显示。
+     * 录屏进程里的覆盖层是否绘制。
+     *
+     * 全局模式由**模块自身进程**的 GlobalFxHost 统一绘制（不依赖录屏进程是否存活），
+     * 所以这里主动让位，避免同一点击被两个窗口画两遍造成重影。
+     * 旧版 `gateMode == GATE_ALWAYS` 同样迁移到全局宿主；否则只在录屏中显示。
      */
-    fun effective(cfg: Config): Boolean =
-        cfg.globalEffect || cfg.gateMode == Config.GATE_ALWAYS || active
+    fun effective(cfg: Config): Boolean {
+        if (cfg.globalEffect || cfg.gateMode == Config.GATE_ALWAYS) return false
+        return active
+    }
 }

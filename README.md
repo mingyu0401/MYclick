@@ -82,7 +82,7 @@
 
 > **测试与日常使用统一使用 release 包**（复用 debug 签名，可直接覆盖安装）。
 > 当前版本 **v1.0.1**；v1.0.0 保留为历史版本，`latest` 已指向 v1.0.1。
-> SHA-256：`ce13e8d0b9549710a75c08f81dfd15e7c6313c5196bc0197c801be61908b161e`
+> SHA-256：`91a6949f6bfdc0a733a729e3a01d747280b04f98ebd5c164d7664055ff178adc`
 
 ---
 
@@ -123,6 +123,7 @@ adb shell su -c 'lspctl scope set --user=0 com.myclick android system com.oplus.
 
 1. **重启手机**（Hook 系统框架必须重启；软重启 `kill system_server` 也可以，无线调试会短暂断开）。
    只更新覆盖层代码时不必重启整机，`adb shell am force-stop com.oplus.screenrecorder` 即可重新加载。
+   **「全局生效」的宿主在 system_server 里，模块 APK 升级后必须重启系统框架才会加载新代码。**
 2. 打开 MYclick 设置页，在「特效」页点一下预览区确认动画，按需要调 SCALE / 调色板。
 3. 用系统快捷磁贴开始录屏，随便点几下，停止后回看视频。建议同时在录屏设置里打开「记录屏幕点击」——
    它写 `show_touches=1` 是最可靠的「录制开始」信号，本模块会把它钳回 0 以隐藏原生白点。
@@ -209,7 +210,7 @@ export ANDROID_HOME=/path/to/Android/Sdk     # Windows 可写 local.properties
 | SCALE / 动画速度 | 1.4 / 1.0 | 范围 0.5~3.0 / 0.3~3.0 |
 | 主题 | 跟随系统 | 可强制深色 / 浅色 |
 | 触摸事件来源 | 自动 | 自动 / 仅系统框架 / 仅应用作用域 / 仅录屏进程本地 |
-| **全局生效** | **关** | 默认只在录屏时显示；打开后**不录屏也出特效**。⚠️ 全局显示可能会厌烦，慎重打开（开启前会二次确认）。旧版「显示时机 → 始终显示」会自动迁移到此开关 |
+| **全局生效** | **关** | 默认只在录屏时显示；打开后**不录屏也出特效**，由 system_server 里的覆盖层直接绘制，不依赖录屏 App 进程是否在运行。⚠️ 全局显示可能会厌烦，慎重打开（开启前二次确认）。旧版「显示时机 → 始终显示」自动迁移到此开关 |
 | 隐藏原生圆点 / DPR 上限 2x | 开 / 开 | 钳 `show_touches=0`；关闭 DPR 上限按真实 density 渲染 |
 | 目标 / 附加包名 | 自动识别本机录屏包 | 打开设置页即探测并自动填入；可手动覆盖 / 重新探测 |
 | 调色板 8 项 | 见规格表 | 深色 / 浅色各 4 个 `#RRGGBB` |
@@ -232,7 +233,8 @@ export ANDROID_HOME=/path/to/Android/Sdk     # Windows 可写 local.properties
 | 设置页 UI 回归 | 2026-11-12 装上 `download/` 里的 release 包逐页截图：三页布局正常、示意图完整显示；修掉 Android 15+ 强制 edge-to-edge 导致的状态栏文字重叠、底部内容从导航下透出；实时预览抽帧可见扩散圆、双段光弧、4 个三角火花 |
 | release 包录屏回归 | 同日 ColorOS 原生录屏 **105s / 1317 帧**（HEVC 1080×2354），全程非黑（桌面段 122/156/157、深色页 40/35/30）；4 次点击全部中继成功（`sink=true`、`active=true`），抽帧可见扩散圆、双段淡蓝光弧、4 个三角火花；`dumpsys window` 仍只有 `displayId=0` 一个 `MYclick-FX` |
 | v1.0.1 UI 回归 | 装上 `MYclick-1.0.1-release.apk`（versionCode 2）逐页截图：版本号 1.0.1、主卡图标与启动图标一致、底栏文字垂直居中；录屏抽帧确认高亮胶囊质心 `48 → 105 → 162` **连续过渡**（非瞬移），页面淡入淡出生效；目标包名自动识别为本机真实安装的 `com.oplus.screenrecorder` |
-| 全局生效默认值 | 覆盖安装后冷启动设置页，root 读取模块 SP 确认 `globalEffect=false`（默认关闭）、`gateMode=0`，配置写入 / 广播链路正常；设备处于锁屏状态，本次未做 UI 截图 |
+| 全局生效默认值 | 覆盖安装后冷启动设置页，root 读取模块 SP 确认 `globalEffect=false`（默认关闭）、`gateMode=0` |
+| 全局生效修复回归 | 2026-11-12：ColorOS 会拦截 system_server 发往普通 App 静态接收器的广播（框架侧 `global sent` 有、App 侧 `recv` 为 0），改为**在 system_server 同进程挂载覆盖层**、ACTION_DOWN 经 TouchBus 直连。软重启后日志 `[android] 全局生效宿主已挂载`，三次点击均有 `global direct` + `overlay onTouch globalHost=true attached=true`；窗口由 `uid=1000 / package=android` 持有；**非录屏状态**短录屏抽帧可见白 → 淡蓝双段光弧 |
 
 <details>
 <summary><b>排障速查表</b></summary>

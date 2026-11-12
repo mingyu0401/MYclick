@@ -14,6 +14,8 @@ import android.os.Bundle
  */
 object TouchRelay {
     const val ACTION_TOUCH = "com.myclick.action.TOUCH"
+    /** 「全局生效」专用：显式投递给模块自身进程的静态接收器 */
+    const val ACTION_GLOBAL_TOUCH = "com.myclick.action.GLOBAL_TOUCH"
     const val ACTION_CONFIG_PUSH = "com.myclick.action.CONFIG_PUSH"
     const val ACTION_CONFIG_REQUEST = "com.myclick.action.CONFIG_REQUEST"
     const val ACTION_TEST_TOUCH = "com.myclick.action.TEST_TOUCH"
@@ -54,6 +56,43 @@ object TouchRelay {
             context.sendBroadcast(i)
         } catch (t: Throwable) {
             // 广播失败不能影响系统输入分发
+        }
+    }
+
+    /**
+     * 全局模式的触摸投递：显式 ComponentName 指向模块自身的静态接收器。
+     *
+     * 不能用 FLAG_RECEIVER_REGISTERED_ONLY —— 静态接收器需要能在模块进程
+     * 未运行时被拉起。接收器默认 disabled，关闭全局模式时系统直接丢弃该广播，
+     * 不会为了每次点击唤醒模块进程。是否绘制由模块 App 自己读 Prefs 决定，
+     * 完全不依赖 system_server / 录屏进程里的配置快照新旧。
+     */
+    fun sendGlobalTouch(
+        context: Context,
+        xPx: Float,
+        yPx: Float,
+        displayId: Int,
+        eventTime: Long,
+        nonce: String
+    ) {
+        try {
+            val i = Intent(ACTION_GLOBAL_TOUCH).apply {
+                component = ComponentName(
+                    Config.MODULE_PACKAGE,
+                    "com.myclick.core.GlobalTouchReceiver"
+                )
+                putExtra(EX_X, xPx)
+                putExtra(EX_Y, yPx)
+                putExtra(EX_DISPLAY_ID, displayId)
+                putExtra(EX_EVENT_TIME, eventTime)
+                putExtra(EX_NONCE, nonce)
+                addFlags(Intent.FLAG_INCLUDE_STOPPED_PACKAGES)
+                addFlags(Intent.FLAG_RECEIVER_FOREGROUND)
+            }
+            context.sendBroadcast(i)
+        } catch (t: Throwable) {
+            // 输入分发链不能因为特效广播失败而中断
+            Diag.log("global", "sendGlobalTouch failed: $t")
         }
     }
 

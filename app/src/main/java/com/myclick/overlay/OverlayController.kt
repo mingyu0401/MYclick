@@ -33,7 +33,11 @@ import kotlin.math.abs
  *    处理外接显示器 / 折叠屏切换；坐标用该 display 的 density 换算成 dp。
  *  - 没有 SYSTEM_ALERT_WINDOW 时回退到往 Activity DecorView 上 addView。
  */
-class OverlayController(private val baseContext: Context) {
+class OverlayController(
+    private val baseContext: Context,
+    /** true = 模块自身进程的「全局生效」宿主：只认总开关，不走录屏状态门控 */
+    private val globalHost: Boolean = false
+) {
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private val displayManager = baseContext.getSystemService(DisplayManager::class.java)
@@ -121,7 +125,14 @@ class OverlayController(private val baseContext: Context) {
     fun reconcile() {
         mainHandler.post {
             val cfg = ConfigStore.value
-            if (cfg.enabled) attach(cfg) else detach()
+            // system_server 里的全局宿主只在「全局生效」打开时才挂窗口，
+            // 关闭时立刻撤掉，避免系统进程常驻一个全屏透明窗口。
+            val want = if (globalHost) {
+                cfg.enabled && (cfg.globalEffect || cfg.gateMode == Config.GATE_ALWAYS)
+            } else {
+                cfg.enabled
+            }
+            if (want) attach(cfg) else detach()
         }
     }
 
@@ -141,9 +152,17 @@ class OverlayController(private val baseContext: Context) {
         com.myclick.core.Diag.log(
             "overlay",
             "onTouch x=${event.xPx} y=${event.yPx} enabled=${cfg.enabled} " +
-                "gate=${cfg.gateMode} active=${RecordingState.isActive()} attached=$attached"
+                "globalHost=$globalHost gate=${cfg.gateMode} " +
+                "active=${RecordingState.isActive()} attached=$attached"
         )
-        if (!cfg.enabled || !RecordingState.effective(cfg)) return
+        // 全局宿主只认总开关 + 全局模式，不走录屏状态门控；
+        // 录屏进程内的宿主仍按 RecordingState 判断（全局模式下让位），避免双份特效。
+        val allow = if (globalHost) {
+            cfg.enabled && (cfg.globalEffect || cfg.gateMode == Config.GATE_ALWAYS)
+        } else {
+            cfg.enabled && RecordingState.effective(cfg)
+        }
+        if (!allow) return
         // AUTO 模式下可能同时收到 framework / app-scoped / 多 monitor 通道的多份，
         // 40ms + 16px 去重，避免同一次点击画两遍特效。
         if (event.displayId == lastDisplayId &&
@@ -205,6 +224,7 @@ class OverlayController(private val baseContext: Context) {
             attached = true
         } catch (t: Throwable) {
             overlayAvailable = false
+            android.util.Log.e("MYclickGlobal", "attach failed: $t")
         }
     }
 

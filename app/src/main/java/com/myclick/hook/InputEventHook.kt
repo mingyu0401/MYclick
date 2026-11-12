@@ -5,8 +5,10 @@ import android.view.Display
 import android.view.MotionEvent
 import com.myclick.bridge.HookBridge
 import com.myclick.bridge.Phase
+import com.myclick.core.Config
 import com.myclick.core.ConfigStore
 import com.myclick.core.Contexts
+import com.myclick.core.TouchBus
 import com.myclick.core.TouchEvent
 import com.myclick.core.TouchRelay
 import kotlin.math.abs
@@ -61,6 +63,8 @@ class InputEventHook(
      */
     @Synchronized
     private fun handle(args: Array<Any?>) {
+        // 设置页改动开关后，5 秒节流的 XSP 刷新保证 system_server 拿到最新配置
+        runCatching { ConfigStore.maybeRefresh(Contexts.any()) }
         val cfg = ConfigStore.value
         enterTrace("enter n=${args.size} enabled=${cfg.enabled} " +
             args.joinToString(",") { it?.javaClass?.simpleName ?: "null" })
@@ -105,8 +109,20 @@ class InputEventHook(
         if (crossProcess) {
             val context = Contexts.any()
             trace("ACTION_DOWN x=$x y=$y display=$displayId ctx=${context != null} nonce=${cfg.nonce}")
+            val global = cfg.globalEffect || cfg.gateMode == Config.GATE_ALWAYS
             if (context != null) {
                 TouchRelay.sendTouch(context, x, y, displayId, time, cfg.nonce, cfg.targetPackage)
+                if (global) {
+                    if (TouchBus.sink != null) {
+                        // system_server 同进程直连：绕开 ColorOS 对后台 App 的广播管控
+                        TouchBus.dispatch(ev)
+                        trace("global direct x=$x y=$y")
+                    } else {
+                        // 兜底：某些分支拿不到 system Context 时走模块进程的静态接收器
+                        TouchRelay.sendGlobalTouch(context, x, y, displayId, time, cfg.nonce)
+                        trace("global sent x=$x y=$y")
+                    }
+                }
             } else if (traceCount <= 3) {
                 bridge.log("[$label] 无 Context，触摸广播无法发出")
             }

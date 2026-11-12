@@ -3,7 +3,9 @@ package com.myclick.ui
 import android.animation.ValueAnimator
 import android.app.Activity
 import android.app.AlertDialog
+import android.content.ComponentName
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.Outline
 import android.graphics.Typeface
@@ -11,6 +13,7 @@ import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
@@ -25,6 +28,7 @@ import android.widget.ScrollView
 import android.widget.TextView
 import com.myclick.R
 import com.myclick.core.Config
+import com.myclick.core.GlobalTouchReceiver
 import com.myclick.core.PackageDetector
 import com.myclick.core.Prefs
 import com.myclick.core.RootHelper
@@ -55,6 +59,8 @@ class SettingsActivity : Activity() {
     private val navLabelColors = mutableListOf<Int>()
     /** 首页 / 特效页各有一份「全局生效」开关，切换时静默同步选中状态 */
     private val globalRows = mutableListOf<View>()
+    private var globalReceiverEnabled: Boolean? = null
+    private var overlayGrantAttempted = false
     private lateinit var navIndicator: View
     private var currentTab = -1
 
@@ -71,6 +77,7 @@ class SettingsActivity : Activity() {
         // 目标包名自动选定为本机真实安装的录屏 App；写盘时会自动广播给被 Hook 进程
         config = autoResolveTarget(config)
         Prefs.write(this, config)
+        syncGlobalReceiver()
 
         window.statusBarColor = Ui.BG
         window.navigationBarColor = Ui.BG
@@ -622,6 +629,36 @@ class SettingsActivity : Activity() {
         preview.applyConfig(config, resources.configuration.uiMode)
         // 首页 / 特效页两份「全局生效」开关保持一致（静默，不弹确认框）
         globalRows.forEach { Ui.syncSwitch(it, config.globalEffect) }
+        syncGlobalReceiver()
+        ensureOverlayPermission()
+    }
+
+    /**
+     * 「全局生效」用静态接收器承接框架的触摸广播。关闭时禁用组件，系统直接丢弃
+     * 广播、不会为每次点击唤醒模块进程；打开时启用并按需放行悬浮窗权限。
+     */
+    private fun syncGlobalReceiver() {
+        val want = config.globalEffect
+        if (globalReceiverEnabled == want) return
+        globalReceiverEnabled = want
+        runCatching {
+            packageManager.setComponentEnabledSetting(
+                ComponentName(this, GlobalTouchReceiver::class.java),
+                if (want) PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+                else PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+                PackageManager.DONT_KILL_APP
+            )
+        }
+    }
+
+    private fun ensureOverlayPermission() {
+        if (!config.globalEffect || overlayGrantAttempted) return
+        if (Settings.canDrawOverlays(this)) return
+        overlayGrantAttempted = true
+        Thread {
+            val viaShizuku = ShizukuBridge.grantOverlayViaShizuku(packageName)
+            if (viaShizuku == null) RootHelper.grantOverlay(packageName)
+        }.start()
     }
 
     /**
