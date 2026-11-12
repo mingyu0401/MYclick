@@ -4,7 +4,7 @@
 
 **把 ColorOS / 一加「屏幕录制」里那个朴素的白色圆点，<br/>换成会扩散、会旋转、会迸出火花的点击特效**
 
-[![Release](https://img.shields.io/badge/Release-v1.0.0-F9A86C?style=flat-square)](https://github.com/mingyu0401/MYclick/releases)
+[![Release](https://img.shields.io/badge/Release-v1.0.1-F9A86C?style=flat-square)](https://github.com/mingyu0401/MYclick/releases)
 [![Platform](https://img.shields.io/badge/Platform-Android%2012%2B-3DDC84?style=flat-square)](#-兼容性)
 [![Framework](https://img.shields.io/badge/Framework-LSPosed-647589?style=flat-square)](#-快速开始)
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.2.0-7F52FF?style=flat-square)](#-从源码构建)
@@ -37,6 +37,7 @@
 | 🎬 **真的录得进去** | `TYPE_APPLICATION_OVERLAY` + 透明 `SurfaceView`，走 SurfaceFlinger 合成链；**不设 `FLAG_SECURE`**，也**绝不往 AUTO_MIRROR 虚拟屏加窗口** |
 | ⚡ **60fps 零分配** | `Choreographer` 驱动、粒子对象池 + swap-remove、`Paint`/`Path` 复用、`dt` 钳 50ms，无粒子立即停帧清屏 |
 | 🎨 **完全可配** | SCALE、动画速度、深浅主题、8 项调色板、目标包名、触摸来源、显示时机，改完即时广播生效 |
+| 📱 **自动识别录屏 App** | 打开设置页即探测本机真实安装的屏幕录制包名并自动填入目标包名，换机 / 换 ROM 无需手填 |
 
 ---
 
@@ -77,11 +78,12 @@
 
 | 渠道 | 文件 |
 | --- | --- |
-| **GitHub Releases**（推荐） | [MYclick-1.0.0-release.apk](https://github.com/mingyu0401/MYclick/releases/latest) |
-| 仓库内直链 | [download/MYclick-1.0.0-release.apk](https://github.com/mingyu0401/MYclick/raw/main/download/MYclick-1.0.0-release.apk) |
+| **GitHub Releases**（推荐） | [MYclick-1.0.1-release.apk](https://github.com/mingyu0401/MYclick/releases/latest) |
+| 仓库内直链 | [download/MYclick-1.0.1-release.apk](https://github.com/mingyu0401/MYclick/raw/main/download/MYclick-1.0.1-release.apk) |
 
-> 从 v1.0.0 起，**测试与日常使用统一使用 release 包**（复用 debug 签名，可直接覆盖安装）。
-> SHA-256：`7d6ac57f35074c81035e9bdf31cdde7d065c272d5d8cf952fcceb1f9ffbd7265`
+> **测试与日常使用统一使用 release 包**（复用 debug 签名，可直接覆盖安装）。
+> 当前版本 **v1.0.1**；v1.0.0 保留为历史版本，`latest` 已指向 v1.0.1。
+> SHA-256：`f8f3cd8a5e53e297f43d7b051e40a8702557e003d2f449ca2ea4f2faa0845534`
 
 ---
 
@@ -91,7 +93,7 @@
 <summary><b>① 安装</b></summary>
 
 ```bash
-adb install -r download/MYclick-1.0.0-release.apk
+adb install -r download/MYclick-1.0.1-release.apk
 adb shell pm list packages -s | grep -i screenrecord   # 确认录屏包名
 ```
 
@@ -102,7 +104,7 @@ adb shell pm list packages -s | grep -i screenrecord   # 确认录屏包名
 
 打开 **LSPosed 管理器 → 模块 → MYclick**，启用后勾选：
 
-- ✅ `com.oplus.screenrecorder`（屏幕录制；其它分支用设置页里的「探测」确认）
+- ✅ `com.oplus.screenrecorder`（屏幕录制；**目标包名会自动识别为本机真实安装的录屏 App**，其它分支可在「关于」页重新探测）
 - ✅ **系统框架 / System Framework (`android`)** ← 全屏点击坐标全靠它
 - ✅ 部分版本还会单列 `system`，一并勾上
 
@@ -178,8 +180,9 @@ flowchart LR
 3. `XSharedPreferences`（仅当文件确实存在时采用，避免默认值覆盖自定义配置）
 4. 内置默认值
 
-**兼容性**：目标包名默认 `com.oplus.screenrecorder`，另有 `coloros / oppo / oneplus / android` 分支，
-`PackageDetector` 运行时用 `pm list packages -s` 探测；`hookAll("dispatchInputEvent")` 按方法名 +
+**兼容性**：目标包名在打开设置页时由 `PackageDetector` 自动选定为本机真实安装的录屏包
+（先查 `PackageManager` 已安装列表，再查 `pm list packages -s`；只有完全找不到时才按
+`coloros / oppo / oneplus / android` 已知分支兜底）；`hookAll("dispatchInputEvent")` 按方法名 +
 `MotionEvent` 参数定位，兼容 Android 17 的两参与旧版三参签名；`findClass` 优先用
 `lpparam.classLoader`（`com.android.server.*` 在 SYSTEMSERVERCLASSPATH）；所有回调内部
 `try/catch`，输入分发链不会因为特效异常而中断。
@@ -200,7 +203,7 @@ flowchart LR
 | --- | --- |
 | **首页** | 版本主卡、Root / LSPosed 状态双卡、设备信息、常用开关、一键推送配置 |
 | **特效** | 实时预览（点一下就出特效）、SCALE / 速度 / 主题 / 触摸来源 / 显示时机、深浅两套调色板 |
-| **关于** | 效果示意图、原理说明、目标包名与探测、工具与仓库链接、排障速查 |
+| **关于** | 效果示意图、原理说明、目标包名（自动识别）与重新探测、工具与仓库链接、排障速查 |
 
 <div align="center">
 
@@ -208,7 +211,10 @@ flowchart LR
 | :---: | :---: | :---: |
 | <img src="docs/images/ui-home.jpg" width="210" alt="设置页首页"/> | <img src="docs/images/ui-fx.jpg" width="210" alt="设置页特效"/> | <img src="docs/images/ui-about.jpg" width="210" alt="设置页关于"/> |
 
-*真机截图 · 一加 PLK110 / Android 17 / ColorOS 17 · release 包*
+*真机截图 · 一加 PLK110 / Android 17 / ColorOS 17 · v1.0.1 release 包*
+
+底部导航带滑动高亮胶囊：切页时旧页淡出横移、新页淡入，图标弹性缩放、文字颜色渐变；
+主卡右侧图标与 App 启动图标共用同一个矢量资源，圆形裁切后自然融入卡片。
 
 </div>
 
@@ -260,7 +266,7 @@ export ANDROID_HOME=/path/to/Android/Sdk     # Windows 可写 local.properties
 | 触摸事件来源 | 自动 | 自动 / 仅系统框架 / 仅应用作用域 / 仅录屏进程本地 |
 | 显示时机 | 自动 | 检测到录屏才显示；可设「始终显示」 |
 | 隐藏原生圆点 / DPR 上限 2x | 开 / 开 | 钳 `show_touches=0`；关闭 DPR 上限按真实 density 渲染 |
-| 目标 / 附加包名 | `com.oplus.screenrecorder` | 支持 `pm` 运行时探测 |
+| 目标 / 附加包名 | 自动识别本机录屏包 | 打开设置页即探测并自动填入；可手动覆盖 / 重新探测 |
 | 调色板 8 项 | 见规格表 | 深色 / 浅色各 4 个 `#RRGGBB` |
 
 ---
@@ -280,6 +286,7 @@ export ANDROID_HOME=/path/to/Android/Sdk     # Windows 可写 local.properties
 | 对齐 | 红色十字标记比对，特效中心与点击点重合，约 154px 的 Y 偏移已消除 |
 | 设置页 UI 回归 | 2026-11-12 装上 `download/` 里的 release 包逐页截图：三页布局正常、示意图完整显示；修掉 Android 15+ 强制 edge-to-edge 导致的状态栏文字重叠、底部内容从导航下透出；实时预览抽帧可见扩散圆、双段光弧、4 个三角火花 |
 | release 包录屏回归 | 同日 ColorOS 原生录屏 **105s / 1317 帧**（HEVC 1080×2354），全程非黑（桌面段 122/156/157、深色页 40/35/30）；4 次点击全部中继成功（`sink=true`、`active=true`），抽帧可见扩散圆、双段淡蓝光弧、4 个三角火花；`dumpsys window` 仍只有 `displayId=0` 一个 `MYclick-FX` |
+| v1.0.1 UI 回归 | 装上 `MYclick-1.0.1-release.apk`（versionCode 2）逐页截图：版本号 1.0.1、主卡图标与启动图标一致、底栏文字垂直居中；录屏抽帧确认高亮胶囊质心 `48 → 105 → 162` **连续过渡**（非瞬移），页面淡入淡出生效；目标包名自动识别为本机真实安装的 `com.oplus.screenrecorder` |
 
 <details>
 <summary><b>排障速查表</b></summary>
@@ -321,7 +328,7 @@ MYclick/
 │           ├── fx/                         # EffectEngine / EffectSurfaceView
 │           ├── hook/                       # 框架 Hook / 录屏运行时 / 中继 / HookGate
 │           ├── overlay/                    # 悬浮窗 + 虚拟屏过滤 + 多显示器
-│           └── ui/                         # SettingsActivity / UiKit / HeroDecorView / 颜色选择
+│           └── ui/                         # SettingsActivity / UiKit / 颜色选择 / 底栏切换动画
 ├── LICENSE
 └── README.md
 ```

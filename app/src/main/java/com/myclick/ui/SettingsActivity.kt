@@ -1,9 +1,11 @@
 package com.myclick.ui
 
+import android.animation.ValueAnimator
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent
 import android.graphics.Color
+import android.graphics.Outline
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
@@ -13,6 +15,8 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewOutlineProvider
+import android.view.animation.DecelerateInterpolator
+import android.view.animation.OvershootInterpolator
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.ImageView
@@ -46,6 +50,10 @@ class SettingsActivity : Activity() {
     private val pages = mutableListOf<View>()
     private val navIcons = mutableListOf<ImageView>()
     private val navLabels = mutableListOf<TextView>()
+    private val navItems = mutableListOf<LinearLayout>()
+    private val navIconColors = mutableListOf<Int>()
+    private val navLabelColors = mutableListOf<Int>()
+    private lateinit var navIndicator: View
     private var currentTab = -1
 
     private val density: Float get() = resources.displayMetrics.density
@@ -53,8 +61,8 @@ class SettingsActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         config = Prefs.read(this)
-        // 首次打开也要落盘 + 广播一次：被 Hook 进程可能已经启动，
-        // 而 XSharedPreferences / ContentProvider 在它们那边未必可用。
+        // 目标包名自动选定为本机真实安装的录屏 App；写盘时会自动广播给被 Hook 进程
+        config = autoResolveTarget(config)
         Prefs.write(this, config)
 
         window.statusBarColor = Ui.BG
@@ -109,61 +117,182 @@ class SettingsActivity : Activity() {
 
     // ---------------- 底部导航 ----------------
 
-    private fun buildNav(): LinearLayout {
+    private fun buildNav(): FrameLayout {
         val labels = listOf("首页", "特效", "关于")
         val icons = listOf(
             R.drawable.ic_nav_home,
             R.drawable.ic_nav_fx,
             R.drawable.ic_nav_info
         )
-        return LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
+        val container = FrameLayout(this).apply {
             background = Ui.cardBg(this@SettingsActivity, Ui.NAV, 100f)
             elevation = dip(12f).toFloat()
+        }
+
+        // 选中态高亮胶囊：切换时平滑滑到对应 tab
+        navIndicator = View(this).apply {
+            background = Ui.cardBg(this@SettingsActivity, Color.parseColor("#3B3B3B"), 100f)
+            alpha = 0f
+        }
+        container.addView(navIndicator, FrameLayout.LayoutParams(dip(92f), dip(52f)).apply {
+            gravity = Gravity.START or Gravity.CENTER_VERTICAL
+        })
+
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
             setPadding(dip(10f), 0, dip(10f), 0)
-            labels.forEachIndexed { i, label ->
-                val item = LinearLayout(this@SettingsActivity).apply {
-                    orientation = LinearLayout.VERTICAL
-                    gravity = Gravity.CENTER
-                    isClickable = true
-                    isFocusable = true
-                    layoutParams = LinearLayout.LayoutParams(0, Ui.MATCH, 1f)
-                    setOnClickListener { selectTab(i) }
-                }
-                val icon = ImageView(this@SettingsActivity).apply {
-                    setImageResource(icons[i])
-                    layoutParams = LinearLayout.LayoutParams(dip(22f), dip(22f))
-                }
-                val text = TextView(this@SettingsActivity).apply {
-                    this.text = label
-                    textSize = 12f
-                    setTextColor(Ui.SUB)
-                    setPadding(0, dip(4f), 0, 0)
-                }
-                item.addView(icon)
-                item.addView(text)
-                navIcons += icon
-                navLabels += text
-                addView(item)
+        }
+        labels.forEachIndexed { i, label ->
+            val item = LinearLayout(this@SettingsActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER
+                isClickable = true
+                isFocusable = true
+                layoutParams = LinearLayout.LayoutParams(0, Ui.MATCH, 1f)
+                setOnClickListener { selectTab(i) }
             }
+            val icon = ImageView(this@SettingsActivity).apply {
+                setImageResource(icons[i])
+                layoutParams = LinearLayout.LayoutParams(dip(22f), dip(22f))
+            }
+            val text = TextView(this@SettingsActivity).apply {
+                this.text = label
+                textSize = 12f
+                setTextColor(Ui.SUB)
+                // 去掉字体自带上下留白：文字紧贴图标，整组在胶囊内垂直居中
+                includeFontPadding = false
+                setPadding(0, dip(2f), 0, 0)
+            }
+            item.addView(icon)
+            item.addView(text)
+            navIcons += icon
+            navLabels += text
+            navItems += item
+            navIconColors += Ui.SUB
+            navLabelColors += Ui.SUB
+            row.addView(item)
+        }
+        container.addView(row, FrameLayout.LayoutParams(Ui.MATCH, Ui.MATCH))
+        return container
+    }
+
+    private fun positionIndicator(index: Int, animate: Boolean) {
+        if (!::navIndicator.isInitialized || navItems.isEmpty()) return
+        val item = navItems.getOrNull(index) ?: return
+        if (item.width <= 0) {
+            if (!isFinishing) navIndicator.post { positionIndicator(index, animate) }
+            return
+        }
+        val target = item.left + (item.width - navIndicator.width) / 2f
+        navIndicator.animate().cancel()
+        navIndicator.alpha = 1f
+        if (animate) {
+            navIndicator.animate().translationX(target)
+                .setDuration(280)
+                .setInterpolator(DecelerateInterpolator(1.6f))
+                .start()
+        } else {
+            navIndicator.translationX = target
         }
     }
 
     private fun selectTab(index: Int) {
         if (index == currentTab) return
-        if (currentTab == TAB_ABOUT) applyTargetFields()
+        val previous = currentTab
+        if (previous == TAB_ABOUT) applyTargetFields()
+        val animate = previous >= 0
         currentTab = index
-        pages.forEachIndexed { i, v -> v.visibility = if (i == index) View.VISIBLE else View.GONE }
-        navIcons.forEachIndexed { i, icon ->
-            icon.setColorFilter(if (i == index) Ui.ACCENT else Ui.SUB)
-        }
-        navLabels.forEachIndexed { i, label ->
-            label.setTextColor(if (i == index) Ui.TEXT else Ui.SUB)
-            label.setTypeface(label.typeface, if (i == index) Typeface.BOLD else Typeface.NORMAL)
-        }
+
+        switchPages(previous, index, animate)
+        animateNavState(index, animate)
+        navIndicator.post { positionIndicator(index, animate) }
+
         if (index == TAB_FX) {
             preview.post { preview.applyConfig(config, resources.configuration.uiMode) }
+        }
+    }
+
+    /** 旧页淡出并轻微横移，新页从反方向淡入，避免硬切。 */
+    private fun switchPages(from: Int, to: Int, animate: Boolean) {
+        if (!animate) {
+            pages.forEachIndexed { i, v ->
+                v.animate().cancel()
+                v.alpha = 1f
+                v.translationX = 0f
+                v.visibility = if (i == to) View.VISIBLE else View.GONE
+            }
+            return
+        }
+        val dir = if (to > from) 1f else -1f
+        val shift = dip(26f).toFloat()
+        val outgoing = pages[from]
+        outgoing.animate().cancel()
+        outgoing.animate()
+            .alpha(0f).translationX(-dir * shift)
+            .setDuration(150)
+            .setInterpolator(DecelerateInterpolator())
+            .withEndAction {
+                outgoing.visibility = View.GONE
+                outgoing.translationX = 0f
+                outgoing.alpha = 1f
+            }
+            .start()
+
+        val incoming = pages[to]
+        incoming.animate().cancel()
+        incoming.alpha = 0f
+        incoming.translationX = dir * shift
+        incoming.visibility = View.VISIBLE
+        incoming.animate()
+            .alpha(1f).translationX(0f)
+            .setDuration(270)
+            .setInterpolator(DecelerateInterpolator(1.4f))
+            .start()
+
+        pages.forEachIndexed { i, v ->
+            if (i != from && i != to) {
+                v.animate().cancel()
+                v.visibility = View.GONE
+            }
+        }
+    }
+
+    /** 图标 / 文字颜色渐变 + 选中项弹性缩放。 */
+    private fun animateNavState(index: Int, animate: Boolean) {
+        navIcons.forEachIndexed { i, icon ->
+            val selected = i == index
+            val color = if (selected) Ui.ACCENT else Ui.SUB
+            if (animate && navIconColors[i] != color) {
+                ValueAnimator.ofArgb(navIconColors[i], color).apply {
+                    duration = 220
+                    addUpdateListener { icon.setColorFilter(it.animatedValue as Int) }
+                    start()
+                }
+            } else {
+                icon.setColorFilter(color)
+            }
+            navIconColors[i] = color
+            val s = if (selected) 1.14f else 1f
+            icon.animate().scaleX(s).scaleY(s)
+                .setDuration(if (animate) 260 else 0L)
+                .setInterpolator(OvershootInterpolator(1.2f))
+                .start()
+        }
+        navLabels.forEachIndexed { i, label ->
+            val selected = i == index
+            val color = if (selected) Ui.TEXT else Ui.SUB
+            if (animate && navLabelColors[i] != color) {
+                ValueAnimator.ofArgb(navLabelColors[i], color).apply {
+                    duration = 220
+                    addUpdateListener { label.setTextColor(it.animatedValue as Int) }
+                    start()
+                }
+            } else {
+                label.setTextColor(color)
+            }
+            navLabelColors[i] = color
+            label.setTypeface(label.typeface, if (selected) Typeface.BOLD else Typeface.NORMAL)
         }
     }
 
@@ -235,9 +364,21 @@ class SettingsActivity : Activity() {
         clipToOutline = true
         layoutParams = LinearLayout.LayoutParams(Ui.MATCH, dip(164f))
 
+        // 与桌面 App 图标共用同一个 vector，圆形裁切后自然融入主卡
         addView(
-            HeroDecorView(this@SettingsActivity),
-            FrameLayout.LayoutParams(dip(160f), Ui.MATCH, Gravity.END)
+            ImageView(this@SettingsActivity).apply {
+                setImageResource(R.drawable.ic_launcher)
+                scaleType = ImageView.ScaleType.FIT_CENTER
+                outlineProvider = object : ViewOutlineProvider() {
+                    override fun getOutline(view: View, outline: Outline) {
+                        outline.setOval(0, 0, view.width, view.height)
+                    }
+                }
+                clipToOutline = true
+            },
+            FrameLayout.LayoutParams(dip(132f), dip(132f), Gravity.END or Gravity.CENTER_VERTICAL).apply {
+                rightMargin = dip(16f)
+            }
         )
         val texts = LinearLayout(this@SettingsActivity).apply {
             orientation = LinearLayout.VERTICAL
@@ -420,13 +561,13 @@ class SettingsActivity : Activity() {
             )
         )
 
-        box.addView(Ui.sectionLabel(this, "作用于哪个录屏应用"))
+        box.addView(Ui.sectionLabel(this, "作用于哪个录屏应用 · 打开时自动识别本机"))
         val targetRow = Ui.editRow(this, "目标包名", config.targetPackage)
         val extraRow = Ui.editRow(this, "附加包名（逗号分隔）", config.extraTargets)
         targetEdit = targetRow.input
         extraEdit = extraRow.input
         box.addView(Ui.group(this, targetRow.view, extraRow.view))
-        box.addView(Ui.secondaryButton(this, "运行时探测系统录屏包（pm）") { detectTarget() })
+        box.addView(Ui.secondaryButton(this, "重新探测本机录屏应用并自动选定") { detectTarget() })
 
         box.addView(Ui.sectionLabel(this, "工具与链接"))
         box.addView(
@@ -465,9 +606,21 @@ class SettingsActivity : Activity() {
         preview.applyConfig(config, resources.configuration.uiMode)
     }
 
+    /**
+     * 目标包名自动选定为用户手机上真实安装的录屏 App。
+     * 当前值仍有效（含用户手动填写且已安装）时保持不动；否则用运行时探测结果替换。
+     */
+    private fun autoResolveTarget(current: Config): Config {
+        if (PackageDetector.isInstalled(this, current.targetPackage)) return current
+        val best = PackageDetector.detectBest(this) ?: return current
+        return current.copy(targetPackage = best)
+    }
+
     private fun applyTargetFields() {
         if (!::targetEdit.isInitialized || !::extraEdit.isInitialized) return
-        val target = targetEdit.text.toString().trim().ifEmpty { Config.DEFAULT_TARGET }
+        val target = targetEdit.text.toString().trim().ifEmpty {
+            PackageDetector.detectBest(this) ?: Config.DEFAULT_TARGET
+        }
         val extra = extraEdit.text.toString().trim()
         if (target != config.targetPackage || extra != config.extraTargets) {
             config = config.copy(targetPackage = target, extraTargets = extra)
@@ -477,17 +630,19 @@ class SettingsActivity : Activity() {
 
     private fun detectTarget() {
         val found = PackageDetector.detect(this)
+        if (found.isEmpty()) {
+            AlertDialog.Builder(this).setTitle("探测结果")
+                .setMessage("未在本机找到屏幕录制应用，可手动填写目标包名。")
+                .setPositiveButton("好", null).show()
+            return
+        }
+        val chosen = found.first()
+        targetEdit.setText(chosen)
+        applyTargetFields()
         AlertDialog.Builder(this)
-            .setTitle("探测结果")
-            .setMessage(if (found.isEmpty()) "未找到" else found.joinToString("\n"))
-            .setPositiveButton("用第一个") { _, _ ->
-                if (found.isNotEmpty()) {
-                    targetEdit.setText(found.first())
-                    applyTargetFields()
-                    toast("已切换到 ${found.first()}")
-                }
-            }
-            .setNegativeButton("关闭", null)
+            .setTitle("已自动选定本机录屏应用")
+            .setMessage("当前：$chosen\n\n本机候选：\n" + found.joinToString("\n"))
+            .setPositiveButton("好", null)
             .show()
     }
 
@@ -527,8 +682,8 @@ class SettingsActivity : Activity() {
     }
 
     private fun versionName(): String = runCatching {
-        packageManager.getPackageInfo(packageName, 0).versionName ?: "1.0.0"
-    }.getOrDefault("1.0.0")
+        packageManager.getPackageInfo(packageName, 0).versionName ?: "1.0.1"
+    }.getOrDefault("1.0.1")
 
     private fun toast(text: String) {
         android.widget.Toast.makeText(this, text, android.widget.Toast.LENGTH_SHORT).show()
