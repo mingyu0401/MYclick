@@ -12,7 +12,6 @@
 
 [📦 下载 Release APK](https://github.com/mingyu0401/MYclick/releases/latest) ·
 [🚀 快速开始](#-快速开始) ·
-[🧩 工作原理](#-工作原理) ·
 [🐛 提交 Issue](https://github.com/mingyu0401/MYclick/issues)
 
 <br/>
@@ -138,60 +137,6 @@ adb shell settings get system show_touches     # 录屏中应为 0
 ```
 
 ColorOS 会过滤普通 App 的 `android.util.Log`，**优先看 LSPosed 管理器 → 日志 → 模块日志**。
-
----
-
-## 🧩 工作原理
-
-```mermaid
-flowchart LR
-    A["用户点击任意 App"] --> B["system_server<br/>InputEventReceiver#dispatchInputEvent"]
-    B -->|"显式 setPackage + 前台广播 + nonce"| C["录屏进程<br/>TouchRelayReceiver"]
-    C --> D["主屏透明覆盖层<br/>SurfaceView + Choreographer"]
-    D --> E["SurfaceFlinger 合成"]
-    E --> F["MediaProjection<br/>录进视频"]
-```
-
-**为什么必须 Hook 系统框架？** 对原版 `屏幕录制 17.5.4` 做 Manifest + DEX 逆向后发现：
-
-- 它靠 `Settings.System.putInt(cr, "show_touches", 1)` 打开 AOSP「显示点按操作反馈」，
-  白点由 `InputDispatcher → PointerController / Sprite` 画在合成层，**不在录屏 App 的 View 树里**；
-- DEX 里那句 `Touch ACTION_DOWN rawX:` 只是**录屏悬浮球自己的 `OnTouchListener`**；
-- 全 DEX 没有 `InputEventReceiver` / `InputChannel` / `monitorInput` 引用 —— 该进程没有全局输入通道。
-
-所以原生「Hook 录屏进程拿 ACTION_DOWN」做不到全屏特效。本模块保留它作调试源，
-真正的数据来自系统框架，再用跨进程广播送到录屏进程绘制。
-
-> ⚠️ **绝不往 MediaProjection 的虚拟显示器上 `addView`**。ColorOS 录屏会新建一块
-> `OPLUSScreenRecording` AUTO_MIRROR 虚拟屏（`type VIRTUAL` / `FLAG_PRIVATE` / `touch NONE`）；
-> 一旦给它加窗口，系统就停止镜像主屏，录屏只剩开头几帧然后全黑（音频仍在录）。
-> `isCaptureDisplay()` 用公开 API 过滤虚拟屏，这正是 v1.0.0 修掉的黑屏问题。
-
-<details>
-<summary><b>点开看配置共享、兼容与降级策略</b></summary>
-
-**配置共享四级回退**（结果缓存在内存，渲染热路径不做 IPC）：
-
-1. `ContentProvider.call(content://com.myclick.config/config, "config")`
-2. **显式广播握手（真机主路径）**：被 Hook 进程用 `ComponentName(com.myclick,
-   com.myclick.core.ConfigRequestReceiver)` 发 `ACTION_CONFIG_REQUEST`，模块 App 回推 `ACTION_CONFIG_PUSH`。
-   Android 11+ 包可见性让 system_server / 录屏进程解析不到模块 Provider，而 LSPosed 2.2.1
-   又把模块 SP 重定向到 `/data/misc/apexdata/*/prefs/com.myclick/`，所以必须是 ComponentName 级显式 Intent。
-3. `XSharedPreferences`（仅当文件确实存在时采用，避免默认值覆盖自定义配置）
-4. 内置默认值
-
-**兼容性**：目标包名在打开设置页时由 `PackageDetector` 自动选定为本机真实安装的录屏包
-（先查 `PackageManager` 已安装列表，再查 `pm list packages -s`；只有完全找不到时才按
-`coloros / oppo / oneplus / android` 已知分支兜底）；`hookAll("dispatchInputEvent")` 按方法名 +
-`MotionEvent` 参数定位，兼容 Android 17 的两参与旧版三参签名；`findClass` 优先用
-`lpparam.classLoader`（`com.android.server.*` 在 SYSTEMSERVERCLASSPATH）；所有回调内部
-`try/catch`，输入分发链不会因为特效异常而中断。
-
-**Root / Shizuku 是可选的**：录屏 App 是系统签名应用、已声明 `SYSTEM_ALERT_WINDOW`，纯 Xposed 就能工作。
-只有 OEM 的 AppOps 策略拒绝悬浮窗时，才需要设置页里的「放行悬浮窗权限」（Shizuku → root 兜底 →
-挂到录屏 App 的全屏 DecorView）。
-
-</details>
 
 ---
 
