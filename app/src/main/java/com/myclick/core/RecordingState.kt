@@ -24,5 +24,12 @@ object RecordingState {
         onChange?.invoke(value)
     }
 
-    fun effective(cfg: Config): Boolean = cfg.gateMode == Config.GATE_ALWAYS || active
+    /**
+     * 是否允许绘制特效：
+     * - `globalEffect`：「全局生效」开关，打开后不再要求录屏进行中；
+     * - `gateMode == GATE_ALWAYS`：旧版「显示时机 → 始终显示」配置，保留兼容；
+     * - 否则只在录屏进行中（active）显示。
+     */
+    fun effective(cfg: Config): Boolean =
+        cfg.globalEffect || cfg.gateMode == Config.GATE_ALWAYS || active
 }

@@ -53,6 +53,8 @@ class SettingsActivity : Activity() {
     private val navItems = mutableListOf<LinearLayout>()
     private val navIconColors = mutableListOf<Int>()
     private val navLabelColors = mutableListOf<Int>()
+    /** 首页 / 特效页各有一份「全局生效」开关，切换时静默同步选中状态 */
+    private val globalRows = mutableListOf<View>()
     private lateinit var navIndicator: View
     private var currentTab = -1
 
@@ -61,6 +63,11 @@ class SettingsActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         config = Prefs.read(this)
+        // 旧版「显示时机 → 始终显示」迁移到新的「全局生效」开关，
+        // 否则 UI 显示关闭、实际却一直全局显示，状态会对不上。
+        if (config.gateMode == Config.GATE_ALWAYS) {
+            config = config.copy(globalEffect = true, gateMode = Config.GATE_AUTO)
+        }
         // 目标包名自动选定为本机真实安装的录屏 App；写盘时会自动广播给被 Hook 进程
         config = autoResolveTarget(config)
         Prefs.write(this, config)
@@ -341,11 +348,19 @@ class SettingsActivity : Activity() {
                 Ui.switchRow(this, "隐藏系统原生触摸圆点", "把 show_touches 钳为 0", config.hideNativeDot) {
                     config = config.copy(hideNativeDot = it); save()
                 },
-                Ui.choiceRow(this, "显示时机", R.array.gate_modes, config.gateMode) {
-                    config = config.copy(gateMode = it); save()
-                }
+                Ui.switchRow(
+                    this,
+                    "全局生效",
+                    "全局显示可能会厌烦，慎重打开",
+                    config.globalEffect,
+                    confirmOnEnable = "开启后，即使没有在录屏，每次点击屏幕也会出现特效。" +
+                        "\n\n全局显示可能会厌烦，慎重打开。（默认仅录屏时显示）"
+                ) {
+                    config = config.copy(globalEffect = it); save()
+                }.also { globalRows += it }
             )
         )
+        box.addView(Ui.body(this, "⚠ 全局显示可能会厌烦，慎重打开；默认关闭，仅在录屏时显示特效。"))
 
         box.addView(Ui.primaryButton(this, "保存并推送配置") {
             applyTargetFields()
@@ -479,9 +494,16 @@ class SettingsActivity : Activity() {
                 Ui.choiceRow(this, "触摸事件来源", R.array.touch_sources, config.touchSource) {
                     config = config.copy(touchSource = it); save()
                 },
-                Ui.choiceRow(this, "显示时机", R.array.gate_modes, config.gateMode) {
-                    config = config.copy(gateMode = it); save()
-                },
+                Ui.switchRow(
+                    this,
+                    "全局生效",
+                    "全局显示可能会厌烦，慎重打开",
+                    config.globalEffect,
+                    confirmOnEnable = "开启后，即使没有在录屏，每次点击屏幕也会出现特效。" +
+                        "\n\n全局显示可能会厌烦，慎重打开。（默认仅录屏时显示）"
+                ) {
+                    config = config.copy(globalEffect = it); save()
+                }.also { globalRows += it },
                 Ui.switchRow(this, "隐藏系统原生触摸圆点", "把 show_touches 钳为 0", config.hideNativeDot) {
                     config = config.copy(hideNativeDot = it); save()
                 },
@@ -598,6 +620,8 @@ class SettingsActivity : Activity() {
     private fun save() {
         Prefs.write(this, config)
         preview.applyConfig(config, resources.configuration.uiMode)
+        // 首页 / 特效页两份「全局生效」开关保持一致（静默，不弹确认框）
+        globalRows.forEach { Ui.syncSwitch(it, config.globalEffect) }
     }
 
     /**

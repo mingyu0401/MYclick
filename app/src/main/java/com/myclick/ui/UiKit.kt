@@ -10,6 +10,7 @@ import android.graphics.drawable.RippleDrawable
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.widget.CompoundButton
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
@@ -183,6 +184,8 @@ object Ui {
         title: String,
         sub: String,
         checked: Boolean,
+        /** 非空时：从关到开会先弹一次确认，取消则自动回退开关状态 */
+        confirmOnEnable: String? = null,
         onChange: (Boolean) -> Unit
     ): LinearLayout = LinearLayout(ctx).apply {
         orientation = LinearLayout.HORIZONTAL
@@ -196,7 +199,8 @@ object Ui {
             addView(rowTitle(ctx, title))
             addView(rowSub(ctx, sub))
         })
-        val sw = Switch(ctx).apply {
+        lateinit var sw: Switch
+        sw = Switch(ctx).apply {
             isChecked = checked
             thumbTintList = ColorStateList(
                 arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
@@ -206,9 +210,35 @@ object Ui {
                 arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
                 intArrayOf(Color.parseColor("#66F9A86C"), Color.parseColor("#33FFFFFF"))
             )
-            setOnCheckedChangeListener { _, c -> onChange(c) }
         }
+        val listener = CompoundButton.OnCheckedChangeListener { _, c ->
+            if (c && !confirmOnEnable.isNullOrEmpty()) {
+                AlertDialog.Builder(ctx)
+                    .setTitle(title)
+                    .setMessage(confirmOnEnable)
+                    .setPositiveButton("仍然开启") { _, _ -> onChange(true) }
+                    .setNegativeButton("取消") { _, _ -> sw.isChecked = false }
+                    .setOnCancelListener { sw.isChecked = false }
+                    .show()
+            } else {
+                onChange(c)
+            }
+        }
+        // 保存监听器，供 syncSwitch() 静默刷新多页重复开关时临时解绑
+        sw.tag = listener
+        sw.setOnCheckedChangeListener(listener)
         addView(sw)
+    }
+
+    /** 静默同步开关状态：不弹确认框、不触发 onChange，避免多页开关互相递归写盘。 */
+    fun syncSwitch(row: View, checked: Boolean) {
+        val group = row as? ViewGroup ?: return
+        val sw = (0 until group.childCount)
+            .firstNotNullOfOrNull { group.getChildAt(it) as? Switch } ?: return
+        val listener = sw.tag as? CompoundButton.OnCheckedChangeListener ?: return
+        sw.setOnCheckedChangeListener(null)
+        sw.isChecked = checked
+        sw.setOnCheckedChangeListener(listener)
     }
 
     fun seekRow(

@@ -141,6 +141,7 @@ object ConfigStore {
                 themeMode = int("themeMode", d.themeMode),
                 touchSource = int("touchSource", d.touchSource),
                 gateMode = int("gateMode", d.gateMode),
+                globalEffect = bool("globalEffect", d.globalEffect),
                 hideNativeDot = bool("hideNativeDot", d.hideNativeDot),
                 dprCapEnabled = bool("dprCapEnabled", d.dprCapEnabled),
                 targetPackage = str("targetPackage", d.targetPackage),

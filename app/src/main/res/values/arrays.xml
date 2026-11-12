@@ -30,8 +30,5 @@
         <item>仅录屏进程本地（调试用）</item>
     </string-array>
 
-    <string-array name="gate_modes" translatable="false">
-        <item>自动（检测到录屏才显示）</item>
-        <item>始终显示</item>
-    </string-array>
+    <!-- 「显示时机」下拉已由设置页的「全局生效」开关取代（Config.gateMode 仅保留旧配置兼容） -->
 </resources>
