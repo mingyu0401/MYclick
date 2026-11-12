@@ -26,6 +26,8 @@ object TouchRelay {
     const val EX_EVENT_TIME = "eventTime"
     const val EX_NONCE = "nonce"
     const val EX_CONFIG = "config"
+    /** true = 这一次点击已经由 system_server 的全局宿主绘制，录屏进程必须让位 */
+    const val EX_GLOBAL_OWNED = "globalOwned"
 
     private fun base(action: String): Intent = Intent(action).apply {
         addFlags(Intent.FLAG_RECEIVER_REGISTERED_ONLY)
@@ -39,7 +41,8 @@ object TouchRelay {
         displayId: Int,
         eventTime: Long,
         nonce: String,
-        targetPackage: String = ""
+        targetPackage: String = "",
+        globalOwned: Boolean = false
     ) {
         try {
             val i = base(ACTION_TOUCH).apply {
@@ -48,6 +51,7 @@ object TouchRelay {
                 putExtra(EX_DISPLAY_ID, displayId)
                 putExtra(EX_EVENT_TIME, eventTime)
                 putExtra(EX_NONCE, nonce)
+                putExtra(EX_GLOBAL_OWNED, globalOwned)
                 // 显式包名：真机 dumpsys 里隐式广播会被放进延迟队列（+500ms），
                 // 指定包名后走前台队列直达动态接收器，点击与特效几乎同步。
                 if (targetPackage.isNotEmpty()) setPackage(targetPackage)

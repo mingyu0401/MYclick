@@ -16,6 +16,7 @@ import android.view.ViewGroup
 import android.view.WindowManager
 import com.myclick.core.Config
 import com.myclick.core.ConfigStore
+import com.myclick.core.GlobalOwner
 import com.myclick.core.RecordingState
 import com.myclick.core.TouchEvent
 import com.myclick.fx.EffectSurfaceView
@@ -114,27 +115,35 @@ class OverlayController(
     }
 
     /**
-     * 窗口生命周期只由总开关决定。
+     * 窗口生命周期只由总开关 / 全局归属决定。
      *
      * 真机验证发现：把窗口与「是否正在录制」绑定后，录屏 App 启动阶段
      * show_touches / MediaProjection 信号会短暂来回翻转，导致 WindowManager
      * 在 100ms 内反复 addView/removeView，最终留下多个泄漏的 MYclick-FX 窗口。
      * 覆盖层是透明 NOT_TOUCHABLE 且无粒子时渲染循环自动停止，常驻没有性能代价；
-     * 「只在录制时出特效」由 onTouch() 里的 RecordingState.effective() 判断即可。
+     * 「只在录制时出特效」由 onTouch() 里的 RecordingState.isActive() 判断即可。
      */
     fun reconcile() {
         mainHandler.post {
             val cfg = ConfigStore.value
+            val global = cfg.globalEffect || cfg.gateMode == Config.GATE_ALWAYS
             // system_server 里的全局宿主只在「全局生效」打开时才挂窗口，
             // 关闭时立刻撤掉，避免系统进程常驻一个全屏透明窗口。
+            //
+            // 录屏进程的宿主：全局模式下只要全局宿主已经确认接管（GlobalOwner），
+            // 就撤掉自己的窗口，物理上保证不可能再叠一份；全局宿主还没接管
+            // （刚开机 / 正在挂窗口）时先留着，随时接住这一击。
             val want = if (globalHost) {
-                cfg.enabled && (cfg.globalEffect || cfg.gateMode == Config.GATE_ALWAYS)
+                cfg.enabled && global
             } else {
-                cfg.enabled
+                cfg.enabled && (!global || !GlobalOwner.owned)
             }
             if (want) attach(cfg) else detach()
         }
     }
+
+    /** 全局宿主是否已挂上窗口（输入线程读取，用于判断这一击归谁画） */
+    fun isAttached(): Boolean = attached
 
     fun updateConfig(cfg: Config) {
         mainHandler.post {
@@ -155,12 +164,18 @@ class OverlayController(
                 "globalHost=$globalHost gate=${cfg.gateMode} " +
                 "active=${RecordingState.isActive()} attached=$attached"
         )
-        // 全局宿主只认总开关 + 全局模式，不走录屏状态门控；
-        // 录屏进程内的宿主仍按 RecordingState 判断（全局模式下让位），避免双份特效。
+        // 全局宿主只认总开关 + 全局模式；
+        // 录屏进程内的宿主用三重门控：总开关、事件级归属标记、是否真的在录屏。
+        // 这里刻意不读 cfg.globalEffect：录屏 App 常驻后台时该值可能是旧快照，
+        // 而归属标记跟着每一次点击的事件走，才是唯一权威。
+        val global = cfg.globalEffect || cfg.gateMode == Config.GATE_ALWAYS
         val allow = if (globalHost) {
-            cfg.enabled && (cfg.globalEffect || cfg.gateMode == Config.GATE_ALWAYS)
+            cfg.enabled && global
         } else {
-            cfg.enabled && RecordingState.effective(cfg)
+            // 全局模式且归属未交还 → 一定不画；
+            // 归属交还（全局宿主还没挂好）时即使配置写着全局也要接住这一击。
+            cfg.enabled && !GlobalOwner.owned && RecordingState.isActive() &&
+                (!global || GlobalOwner.handedBack)
         }
         if (!allow) return
         // AUTO 模式下可能同时收到 framework / app-scoped / 多 monitor 通道的多份，
@@ -280,6 +295,8 @@ class OverlayController(
         @Suppress("DEPRECATION")
         display.getRealMetrics(metrics)
         val cfg = ConfigStore.value
+        // 全局模式下录屏进程不再挂任何宿主（含 DecorView 兜底），绘制权在 system_server
+        if (cfg.globalEffect || cfg.gateMode == Config.GATE_ALWAYS) return
         val view = EffectSurfaceView(decor.context, metrics.density)
         view.applyConfig(cfg, decor.context.resources.configuration.uiMode)
         try {

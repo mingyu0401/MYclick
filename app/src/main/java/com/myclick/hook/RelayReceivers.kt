@@ -7,6 +7,7 @@ import android.content.IntentFilter
 import android.os.Build
 import com.myclick.core.Config
 import com.myclick.core.ConfigStore
+import com.myclick.core.GlobalOwner
 import com.myclick.core.TouchBus
 import com.myclick.core.TouchRelay
 
@@ -49,16 +50,27 @@ class TouchRelayReceiver : BroadcastReceiver() {
                 val expected = ConfigStore.value.nonce
                 val got = intent.getStringExtra(TouchRelay.EX_NONCE)
                 val event = TouchRelay.parseTouch(intent, expected)
+                val globalOwned = intent.getBooleanExtra(TouchRelay.EX_GLOBAL_OWNED, false)
                 com.myclick.core.Diag.log(
                     "relay",
-                    "touch recv nonce=$got expected=$expected parsed=$event " +
-                        "sink=${TouchBus.sink != null}"
+                    "touch recv nonce=$got expected=$expected globalOwned=$globalOwned " +
+                        "parsed=$event sink=${TouchBus.sink != null}"
                 )
-                if (event != null) TouchBus.dispatch(event)
+                if (event != null) {
+                    // 归属标记先落地：全局模式下哪怕本进程配置快照还是旧的，
+                    // 也不会再画第二份。标记跟着事件走，不依赖任何配置同步。
+                    if (GlobalOwner.update(globalOwned)) {
+                        // 归属翻转：被接管就撤掉本进程窗口，交还时立刻重新挂上
+                        RecorderRuntime.refreshOverlay()
+                    }
+                    if (!globalOwned) TouchBus.dispatch(event)
+                }
             }
             TouchRelay.ACTION_CONFIG_PUSH -> {
                 val config = TouchRelay.parseConfig(intent) ?: return
                 ConfigStore.applyPush(config)
+                // 归属不在这里复位：它由每一次点击的事件标记负责。
+                // 配置更新只影响绘制参数与窗口是否需要重建。
                 RecorderRuntime.onConfig(config)
             }
             TouchRelay.ACTION_TEST_TOUCH -> {

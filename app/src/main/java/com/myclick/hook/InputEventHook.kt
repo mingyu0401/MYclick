@@ -8,6 +8,7 @@ import com.myclick.bridge.Phase
 import com.myclick.core.Config
 import com.myclick.core.ConfigStore
 import com.myclick.core.Contexts
+import com.myclick.core.GlobalOwner
 import com.myclick.core.TouchBus
 import com.myclick.core.TouchEvent
 import com.myclick.core.TouchRelay
@@ -31,7 +32,13 @@ class InputEventHook(
     private val label: String,
     /** true = 通过广播投递给别的进程；false = 直接交给本进程 TouchBus */
     private val crossProcess: Boolean,
-    private val classLoader: ClassLoader? = null
+    private val classLoader: ClassLoader? = null,
+    /**
+     * true = 当前实例跑在 system_server 里，是「全局生效」的权威绘制方。
+     * 只有它可以在全局模式下标记事件归属；其它进程的观察实例在全局模式下直接退出，
+     * 否则同一次点击会被 App 作用域通道再画一遍。
+     */
+    private val globalAuthority: Boolean = false
 ) {
     private var lastTime = 0L
     private var lastX = Float.NaN
@@ -106,27 +113,47 @@ class InputEventHook(
         lastDisplay = displayId
 
         val ev = TouchEvent(x, y, displayId, time)
+        val global = cfg.globalEffect || cfg.gateMode == Config.GATE_ALWAYS
         if (crossProcess) {
             val context = Contexts.any()
-            trace("ACTION_DOWN x=$x y=$y display=$displayId ctx=${context != null} nonce=${cfg.nonce}")
-            val global = cfg.globalEffect || cfg.gateMode == Config.GATE_ALWAYS
+            trace("ACTION_DOWN x=$x y=$y display=$displayId ctx=${context != null} " +
+                "global=$global authority=$globalAuthority nonce=${cfg.nonce}")
+            if (global && !globalAuthority) {
+                // 全局模式由 system_server 的宿主统一绘制。
+                // app-scoped 观察通道（普通 App 进程）必须静默，否则同一次点击会多画一份。
+                return
+            }
             if (context != null) {
-                TouchRelay.sendTouch(context, x, y, displayId, time, cfg.nonce, cfg.targetPackage)
                 if (global) {
-                    if (TouchBus.sink != null) {
-                        // system_server 同进程直连：绕开 ColorOS 对后台 App 的广播管控
+                    // 全局宿主已经挂上窗口 → 明确告诉录屏进程「这次归我画」，
+                    // 录屏进程收到带该标记的事件会直接丢弃，从源头消除双份特效。
+                    val ready = TouchBus.sink != null && FrameworkRuntime.globalOverlayReady()
+                    if (ready) {
+                        TouchRelay.sendTouch(
+                            context, x, y, displayId, time, cfg.nonce, cfg.targetPackage,
+                            globalOwned = true
+                        )
                         TouchBus.dispatch(ev)
                         trace("global direct x=$x y=$y")
                     } else {
-                        // 兜底：某些分支拿不到 system Context 时走模块进程的静态接收器
-                        TouchRelay.sendGlobalTouch(context, x, y, displayId, time, cfg.nonce)
-                        trace("global sent x=$x y=$y")
+                        // 全局宿主还没挂好（刚开机 / 正在挂窗口）：这一击交给录屏进程，
+                        // 自己绝不同时画 —— 宁可只有一份，也不要两份叠在一起。
+                        TouchRelay.sendTouch(
+                            context, x, y, displayId, time, cfg.nonce, cfg.targetPackage,
+                            globalOwned = false
+                        )
+                        trace("global pending -> recorder x=$x y=$y")
                     }
+                } else {
+                    TouchRelay.sendTouch(context, x, y, displayId, time, cfg.nonce, cfg.targetPackage)
                 }
             } else if (traceCount <= 3) {
                 bridge.log("[$label] 无 Context，触摸广播无法发出")
             }
         } else {
+            // 录屏进程内：全局模式下让位给 framework 宿主；GlobalOwner 是事件级权威标记，
+            // 即使本进程的配置快照还是旧的，也能立刻停手。
+            if (global || GlobalOwner.owned) return
             com.myclick.core.TouchBus.dispatch(ev)
         }
     }

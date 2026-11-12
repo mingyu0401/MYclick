@@ -54,7 +54,7 @@ object FrameworkRuntime {
             }
         }
 
-        val hook = InputEventHook(bridge, "framework", true, classLoader)
+        val hook = InputEventHook(bridge, "framework", true, classLoader, globalAuthority = true)
         hook.install()
         // 兼容不同 AOSP 分支：监视通道的 InputEventReceiver 子类可能直接覆写 onInputEvent。
         // 与 dispatchInputEvent 共享同一份去重状态，不会重复触发。
@@ -101,6 +101,14 @@ object FrameworkRuntime {
         if (context == null) return
         ConfigPushRegistrar.ensure(context)
     }
+
+    /**
+     * 全局宿主是否已经真的挂上窗口。
+     *
+     * 只有窗口就绪时才敢告诉录屏进程「这一击归我画」；否则会出现两边都以为
+     * 对方在画、或者两边同时画的情况。`attached` 是 volatile，输入线程可直接读。
+     */
+    fun globalOverlayReady(): Boolean = globalOverlay?.isAttached() == true
 
     /** 反射读取对象（含父类）里的 mContext / mSystemContext */
     private fun readContext(self: Any?): Context? {

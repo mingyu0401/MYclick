@@ -16,23 +16,22 @@ object RecordingState {
     @Volatile
     var onChange: ((Boolean) -> Unit)? = null
 
+    /**
+     * 录制刚开始时的回调：录屏进程借此重新拉一次配置。
+     *
+     * 录屏 App 常常在后台常驻，用户打开「全局生效」时它可能被冻结、错过了
+     * CONFIG_PUSH；等真正开录时快照还是旧的。录制开始的这一瞬间刷新一次，
+     * 能保证后续点击按最新配置判断该不该由自己绘制。
+     */
+    @Volatile
+    var onStart: (() -> Unit)? = null
+
     fun isActive(): Boolean = active
 
     fun setActive(value: Boolean) {
         if (active == value) return
         active = value
+        if (value) runCatching { onStart?.invoke() }
         onChange?.invoke(value)
-    }
-
-    /**
-     * 录屏进程里的覆盖层是否绘制。
-     *
-     * 全局模式由**模块自身进程**的 GlobalFxHost 统一绘制（不依赖录屏进程是否存活），
-     * 所以这里主动让位，避免同一点击被两个窗口画两遍造成重影。
-     * 旧版 `gateMode == GATE_ALWAYS` 同样迁移到全局宿主；否则只在录屏中显示。
-     */
-    fun effective(cfg: Config): Boolean {
-        if (cfg.globalEffect || cfg.gateMode == Config.GATE_ALWAYS) return false
-        return active
     }
 }

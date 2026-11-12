@@ -634,18 +634,20 @@ class SettingsActivity : Activity() {
     }
 
     /**
-     * 「全局生效」用静态接收器承接框架的触摸广播。关闭时禁用组件，系统直接丢弃
-     * 广播、不会为每次点击唤醒模块进程；打开时启用并按需放行悬浮窗权限。
+     * 旧的「模块进程静态接收器」兜底已经停用。
+     *
+     * 全局绘制现在完全由 system_server 里的宿主承担（同进程直连，无广播延迟）；
+     * 再保留一个靠广播触发的第二绘制入口，只会让同一次点击出现两份特效，
+     * 而且它的 nonce 是公开默认值，任何 App 都能伪造。这里始终把组件禁用，
+     * 系统会直接丢弃对应广播，不会为点击唤醒模块进程。
      */
     private fun syncGlobalReceiver() {
-        val want = config.globalEffect
-        if (globalReceiverEnabled == want) return
-        globalReceiverEnabled = want
+        if (globalReceiverEnabled == false) return
+        globalReceiverEnabled = false
         runCatching {
             packageManager.setComponentEnabledSetting(
                 ComponentName(this, GlobalTouchReceiver::class.java),
-                if (want) PackageManager.COMPONENT_ENABLED_STATE_ENABLED
-                else PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+                PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
                 PackageManager.DONT_KILL_APP
             )
         }
@@ -737,8 +739,8 @@ class SettingsActivity : Activity() {
     }
 
     private fun versionName(): String = runCatching {
-        packageManager.getPackageInfo(packageName, 0).versionName ?: "1.0.1"
-    }.getOrDefault("1.0.1")
+        packageManager.getPackageInfo(packageName, 0).versionName ?: "1.0.2"
+    }.getOrDefault("1.0.2")
 
     private fun toast(text: String) {
         android.widget.Toast.makeText(this, text, android.widget.Toast.LENGTH_SHORT).show()

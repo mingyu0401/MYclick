@@ -4,7 +4,7 @@
 
 **把 ColorOS / 一加「屏幕录制」里那个朴素的白色圆点，<br/>换成会扩散、会旋转、会迸出火花的点击特效**
 
-[![Release](https://img.shields.io/badge/Release-v1.0.1-F9A86C?style=flat-square)](https://github.com/mingyu0401/MYclick/releases)
+[![Release](https://img.shields.io/badge/Release-v1.0.2-F9A86C?style=flat-square)](https://github.com/mingyu0401/MYclick/releases)
 [![Platform](https://img.shields.io/badge/Platform-Android%2012%2B-3DDC84?style=flat-square)](#-兼容性)
 [![Framework](https://img.shields.io/badge/Framework-LSPosed-647589?style=flat-square)](#-快速开始)
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.2.0-7F52FF?style=flat-square)](#-从源码构建)
@@ -77,12 +77,12 @@
 
 | 渠道 | 文件 |
 | --- | --- |
-| **GitHub Releases**（推荐） | [MYclick-1.0.1-release.apk](https://github.com/mingyu0401/MYclick/releases/latest) |
-| 仓库内直链 | [download/MYclick-1.0.1-release.apk](https://github.com/mingyu0401/MYclick/raw/main/download/MYclick-1.0.1-release.apk) |
+| **GitHub Releases**（推荐） | [MYclick-1.0.2-release.apk](https://github.com/mingyu0401/MYclick/releases/latest) |
+| 仓库内直链 | [download/MYclick-1.0.2-release.apk](https://github.com/mingyu0401/MYclick/raw/main/download/MYclick-1.0.2-release.apk) |
 
 > **测试与日常使用统一使用 release 包**（复用 debug 签名，可直接覆盖安装）。
-> 当前版本 **v1.0.1**；v1.0.0 保留为历史版本，`latest` 已指向 v1.0.1。
-> SHA-256：`91a6949f6bfdc0a733a729e3a01d747280b04f98ebd5c164d7664055ff178adc`
+> 当前版本 **v1.0.2**；v1.0.0 / v1.0.1 保留为历史版本，`latest` 已指向 v1.0.2。
+> SHA-256：`7a5a1394e86f2298b5ddfc699400e27b7239cb383fc76a352448ccc52213ab05`
 
 ---
 
@@ -92,7 +92,7 @@
 <summary><b>① 安装</b></summary>
 
 ```bash
-adb install -r download/MYclick-1.0.1-release.apk
+adb install -r download/MYclick-1.0.2-release.apk
 adb shell pm list packages -s | grep -i screenrecord   # 确认录屏包名
 ```
 
@@ -157,7 +157,7 @@ ColorOS 会过滤普通 App 的 `android.util.Log`，**优先看 LSPosed 管理�
 | :---: | :---: | :---: |
 | <img src="docs/images/ui-home.jpg" width="210" alt="设置页首页"/> | <img src="docs/images/ui-fx.jpg" width="210" alt="设置页特效"/> | <img src="docs/images/ui-about.jpg" width="210" alt="设置页关于"/> |
 
-*真机截图 · 一加 PLK110 / Android 17 / ColorOS 17 · v1.0.1 release 包*
+*真机截图 · 一加 PLK110 / Android 17 / ColorOS 17 · v1.0.2 release 包*
 
 底部导航带滑动高亮胶囊：切页时旧页淡出横移、新页淡入，图标弹性缩放、文字颜色渐变；
 主卡右侧图标与 App 启动图标共用同一个矢量资源，圆形裁切后自然融入卡片。
