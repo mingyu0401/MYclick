@@ -235,6 +235,7 @@ export ANDROID_HOME=/path/to/Android/Sdk     # Windows 可写 local.properties
 | v1.0.1 UI 回归 | 装上 `MYclick-1.0.1-release.apk`（versionCode 2）逐页截图：版本号 1.0.1、主卡图标与启动图标一致、底栏文字垂直居中；录屏抽帧确认高亮胶囊质心 `48 → 105 → 162` **连续过渡**（非瞬移），页面淡入淡出生效；目标包名自动识别为本机真实安装的 `com.oplus.screenrecorder` |
 | 全局生效默认值 | 覆盖安装后冷启动设置页，root 读取模块 SP 确认 `globalEffect=false`（默认关闭）、`gateMode=0` |
 | 全局生效修复回归 | 2026-11-12：ColorOS 会拦截 system_server 发往普通 App 静态接收器的广播（框架侧 `global sent` 有、App 侧 `recv` 为 0），改为**在 system_server 同进程挂载覆盖层**、ACTION_DOWN 经 TouchBus 直连。软重启后日志 `[android] 全局生效宿主已挂载`，三次点击均有 `global direct` + `overlay onTouch globalHost=true attached=true`；窗口由 `uid=1000 / package=android` 持有；**非录屏状态**短录屏抽帧可见白 → 淡蓝双段光弧 |
+| v1.0.2 叠画修复 | 打开「全局生效」后再开录屏，用户真机确认每次点击只出一份特效。根因是录屏 App 常驻后台时错过了配置推送，快照里 `globalEffect` 仍为 `false`，一开录两套窗口就各画一份；现由 system_server 随每次 `ACTION_DOWN` 下发 `globalOwned` 归属标记，录屏进程收到即让位，归属信息跟着事件走、不再依赖配置同步 |
 
 <details>
 <summary><b>排障速查表</b></summary>
