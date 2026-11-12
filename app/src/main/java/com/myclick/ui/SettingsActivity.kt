@@ -160,6 +160,10 @@ class SettingsActivity : Activity() {
                 this.text = label
                 textSize = 12f
                 setTextColor(Ui.SUB)
+                // LinearLayout 默认给子 View 生成 MATCH_PARENT 宽度，而 TextView 默认
+                // 文字左对齐，会让文字偏到图标左侧。显式占满 tab 并让文字水平居中。
+                layoutParams = LinearLayout.LayoutParams(Ui.MATCH, Ui.WRAP)
+                gravity = Gravity.CENTER_HORIZONTAL
                 // 去掉字体自带上下留白：文字紧贴图标，整组在胶囊内垂直居中
                 includeFontPadding = false
                 setPadding(0, dip(2f), 0, 0)
