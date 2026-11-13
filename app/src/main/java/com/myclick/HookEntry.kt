@@ -59,6 +59,15 @@ class HookEntry : IXposedHookLoadPackage, IXposedHookZygoteInit {
             return
         }
 
+        // 系统 UID 的子进程（ColorOS 的 system:ui 就是 SystemUI 本体）不再装任何 Hook。
+        // 全屏触摸已经由 system_server 的 monitor 通道覆盖，在这里再装一套只会给
+        // 状态栏 / 截屏 / 长截图这些关键路径增加额外的 Xposed 调用和图层开销。
+        // 必须放在 installCommon() 之前：连 Context 捕获都不该进这个进程。
+        if (HookGate.isSystemSubProcess) {
+            bridge.log("[skip] 系统子进程 ${HookGate.processName} 不安装 Hook")
+            return
+        }
+
         if (HookGate.claim(HookGate.COMMON)) installCommon()
 
         // 个别 LSPosed 分支在普通 App 进程也会回调 "android"（framework-res）。

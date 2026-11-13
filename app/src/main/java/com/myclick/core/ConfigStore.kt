@@ -23,6 +23,9 @@ object ConfigStore {
     @Volatile
     private var lastRefreshMs: Long = 0L
 
+    @Volatile
+    private var refreshing: Boolean = false
+
     /** 配置刷新完成后的回调（由被 Hook 进程注册，用来更新覆盖层） */
     @Volatile
     var onUpdated: ((Config) -> Unit)? = null
@@ -68,6 +71,33 @@ object ConfigStore {
         if (abs(now - lastRefreshMs) < REFRESH_INTERVAL_MS) return
         lastRefreshMs = now
         refresh(context)
+    }
+
+    /**
+     * 输入分发线程专用的非阻塞版本。
+     *
+     * `refresh()` 里有一次 ContentProvider Binder 调用（实测 5~20ms）和一次广播，
+     * 直接在 InputDispatcher 线程上跑会拖慢每一次按下。这里只做时间戳判断，
+     * 真正拉取放到后台线程，输入链路零阻塞。
+     */
+    fun maybeRefreshAsync(context: Context?) {
+        val now = System.currentTimeMillis()
+        if (abs(now - lastRefreshMs) < REFRESH_INTERVAL_MS) return
+        if (refreshing) return
+        refreshing = true
+        lastRefreshMs = now
+        Thread({
+            try {
+                refresh(context)
+            } catch (t: Throwable) {
+                // 刷新失败沿用旧快照即可
+            } finally {
+                refreshing = false
+            }
+        }, "MYclick-ConfigRefresh").apply {
+            isDaemon = true
+            start()
+        }
     }
 
     fun refresh(context: Context?) {

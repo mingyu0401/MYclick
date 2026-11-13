@@ -4,7 +4,7 @@
 
 **把 ColorOS / 一加「屏幕录制」里那个朴素的白色圆点，<br/>换成会扩散、会旋转、会迸出火花的点击特效**
 
-[![Release](https://img.shields.io/badge/Release-v1.0.2-F9A86C?style=flat-square)](https://github.com/mingyu0401/MYclick/releases)
+[![Release](https://img.shields.io/badge/Release-v1.0.3-F9A86C?style=flat-square)](https://github.com/mingyu0401/MYclick/releases)
 [![Platform](https://img.shields.io/badge/Platform-Android%2012%2B-3DDC84?style=flat-square)](#-兼容性)
 [![Framework](https://img.shields.io/badge/Framework-LSPosed-647589?style=flat-square)](#-快速开始)
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.2.0-7F52FF?style=flat-square)](#-从源码构建)
@@ -77,12 +77,12 @@
 
 | 渠道 | 文件 |
 | --- | --- |
-| **GitHub Releases**（推荐） | [MYclick-1.0.2-release.apk](https://github.com/mingyu0401/MYclick/releases/latest) |
-| 仓库内直链 | [download/MYclick-1.0.2-release.apk](https://github.com/mingyu0401/MYclick/raw/main/download/MYclick-1.0.2-release.apk) |
+| **GitHub Releases**（推荐） | [MYclick-1.0.3-release.apk](https://github.com/mingyu0401/MYclick/releases/latest) |
+| 仓库内直链 | [download/MYclick-1.0.3-release.apk](https://github.com/mingyu0401/MYclick/raw/main/download/MYclick-1.0.3-release.apk) |
 
 > **测试与日常使用统一使用 release 包**（复用 debug 签名，可直接覆盖安装）。
-> 当前版本 **v1.0.2**；v1.0.0 / v1.0.1 保留为历史版本，`latest` 已指向 v1.0.2。
-> SHA-256：`7a5a1394e86f2298b5ddfc699400e27b7239cb383fc76a352448ccc52213ab05`
+> 当前版本 **v1.0.3**；v1.0.0 / v1.0.1 / v1.0.2 保留为历史版本，`latest` 已指向 v1.0.3。
+> SHA-256：`5b75b7283a1ef5efd096c4c0e41bcf5779da40c87ff7ea8315a2b615e09e9527`
 
 ---
 
@@ -92,7 +92,7 @@
 <summary><b>① 安装</b></summary>
 
 ```bash
-adb install -r download/MYclick-1.0.2-release.apk
+adb install -r download/MYclick-1.0.3-release.apk
 adb shell pm list packages -s | grep -i screenrecord   # 确认录屏包名
 ```
 
@@ -157,7 +157,7 @@ ColorOS 会过滤普通 App 的 `android.util.Log`，**优先看 LSPosed 管理�
 | :---: | :---: | :---: |
 | <img src="docs/images/ui-home.jpg" width="210" alt="设置页首页"/> | <img src="docs/images/ui-fx.jpg" width="210" alt="设置页特效"/> | <img src="docs/images/ui-about.jpg" width="210" alt="设置页关于"/> |
 
-*真机截图 · 一加 PLK110 / Android 17 / ColorOS 17 · v1.0.2 release 包*
+*真机截图 · 一加 PLK110 / Android 17 / ColorOS 17 · v1.0.3 release 包*
 
 底部导航带滑动高亮胶囊：切页时旧页淡出横移、新页淡入，图标弹性缩放、文字颜色渐变；
 主卡右侧图标与 App 启动图标共用同一个矢量资源，圆形裁切后自然融入卡片。
@@ -236,6 +236,7 @@ export ANDROID_HOME=/path/to/Android/Sdk     # Windows 可写 local.properties
 | 全局生效默认值 | 覆盖安装后冷启动设置页，root 读取模块 SP 确认 `globalEffect=false`（默认关闭）、`gateMode=0` |
 | 全局生效修复回归 | 2026-11-12：ColorOS 会拦截 system_server 发往普通 App 静态接收器的广播（框架侧 `global sent` 有、App 侧 `recv` 为 0），改为**在 system_server 同进程挂载覆盖层**、ACTION_DOWN 经 TouchBus 直连。软重启后日志 `[android] 全局生效宿主已挂载`，三次点击均有 `global direct` + `overlay onTouch globalHost=true attached=true`；窗口由 `uid=1000 / package=android` 持有；**非录屏状态**短录屏抽帧可见白 → 淡蓝双段光弧 |
 | v1.0.2 叠画修复 | 打开「全局生效」后再开录屏，用户真机确认每次点击只出一份特效。根因是录屏 App 常驻后台时错过了配置推送，快照里 `globalEffect` 仍为 `false`，一开录两套窗口就各画一份；现由 system_server 随每次 `ACTION_DOWN` 下发 `globalOwned` 归属标记，录屏进程收到即让位，归属信息跟着事件走、不再依赖配置同步 |
+| v1.0.3 长截图卡顿修复 | 根因是 `HookGate.isSystemServer` 用 `startsWith("system:")` 判断，把 ColorOS 的 `system:ui` 也当成 system_server，于是在一个 SystemUI 进程里又挂了一套全屏覆盖层 + 输入 Hook（`dumpsys window` 里能看到两条 `MYclick-FX`，session 分别属于 system_server 和 `system:ui`）。改为精确匹配 `system_server` / `system`，并让所有 `system:*` 子进程直接跳过 Hook；同时把输入热路径上的 MOVE 过滤提前、配置刷新改异步、日志改惰性求值，`onDisplayChanged` 只在屏幕密度变化时才重建窗口。修复后 `dumpsys window` 里 `MYclick-FX` 只剩 1 条，session 归属 system_server，点击日志仍为 `global direct` |
 
 <details>
 <summary><b>排障速查表</b></summary>

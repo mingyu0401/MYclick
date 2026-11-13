@@ -59,6 +59,9 @@ class OverlayController(
     private var lastDisplayId = Int.MIN_VALUE
     private var lastDisplayChangeMs = 0L
 
+    /** 已经应用到宿主上的配置；相同配置不再重复刷新渲染参数 */
+    private var appliedConfig: Config? = null
+
     private val displayListener = object : DisplayManager.DisplayListener {
         override fun onDisplayAdded(displayId: Int) {
             // 绝不因为「新显示器出现」就建窗口：录屏一开始会新建一个
@@ -74,12 +77,26 @@ class OverlayController(
                 mainHandler.post { removeHost(displayId) }
                 return
             }
-            // 折叠屏 / 刷新率切换会连发 onDisplayChanged；限流，避免窗口被反复拆建
+            // 亮度、刷新率、HDR 变化、长截图采集过程都会狂发 onDisplayChanged。
+            // 全屏窗口是 MATCH_PARENT，分辨率变化由 surfaceChanged 自动适配，
+            // 完全不需要动它；这里再 post 任务只会往 system_server 主线程堆活，
+            // 长截图时直接把系统卡住。只有屏幕密度真的变了（设置里改显示大小）
+            // 才值得重建窗口，其余一律忽略。
+            if (!densityChanged(d)) return
             val now = SystemClock.uptimeMillis()
-            if (now - lastDisplayChangeMs < 250L) return
+            if (now - lastDisplayChangeMs < 1000L) return
             lastDisplayChangeMs = now
             mainHandler.post { refreshHost(displayId) }
         }
+    }
+
+    /** 只有「设置里改了显示大小」这类密度变化才值得重建窗口 */
+    private fun densityChanged(d: Display): Boolean {
+        val host = windowHosts.get(d.displayId) ?: decorHosts.get(d.displayId) ?: return false
+        val m = DisplayMetrics()
+        @Suppress("DEPRECATION")
+        d.getRealMetrics(m)
+        return abs(m.density - host.density) > 0.01f
     }
 
     /**
@@ -147,9 +164,15 @@ class OverlayController(
 
     fun updateConfig(cfg: Config) {
         mainHandler.post {
-            forEachHost { host ->
-                val uiMode = host.context.resources.configuration.uiMode
-                host.view.applyConfig(cfg, uiMode)
+            // 配置没变就不要重复 applyConfig：它会重算渲染参数并往主线程再 post
+            // 一次 applyFixedSize。归属标记翻转时 updateConfig 的调用会比较频繁，
+            // 长截图 / 滚动期间这些无谓任务会堆在 system_server 主线程上。
+            if (cfg != appliedConfig) {
+                appliedConfig = cfg
+                forEachHost { host ->
+                    val uiMode = host.context.resources.configuration.uiMode
+                    host.view.applyConfig(cfg, uiMode)
+                }
             }
             reconcile()
         }

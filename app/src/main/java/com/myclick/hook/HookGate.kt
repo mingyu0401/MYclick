@@ -38,10 +38,24 @@ object HookGate {
         }.getOrDefault("")
     }
 
+    /**
+     * 只认真正的 system_server。
+     *
+     * 这里**不能**用 `startsWith("system:")`：ColorOS 有一个 `system:ui` 进程
+     * （SystemUI 本体，uid 1000），它同样以 "system:" 开头。一旦被误判，
+     * 模块会在 SystemUI 进程里再装一套 InputEventReceiver Hook 和全屏覆盖层：
+     *   - 多出一个常驻的 MYclick-FX SurfaceView 图层，长截图 / 滚动时白付合成开销
+     *   - 和 system_server 的宿主各画一份，还会重复发触摸广播
+     * 真机 `dumpsys window` 里能看到两条 MYclick-FX，session pid 分别是
+     * system_server 和 system:ui。
+     */
     val isSystemServer: Boolean
         get() {
             val p = processName
-            return p == "system_server" || p == "system" ||
-                p.startsWith("system_server:") || p.startsWith("system:")
+            return p == "system_server" || p == "system"
         }
+
+    /** 系统 UID 的子进程（system:ui / system:screenshot …）：不应该再被 Hook */
+    val isSystemSubProcess: Boolean
+        get() = processName.startsWith("system:")
 }

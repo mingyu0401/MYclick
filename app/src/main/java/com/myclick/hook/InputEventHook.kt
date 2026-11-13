@@ -45,6 +45,9 @@ class InputEventHook(
     private var lastY = Float.NaN
     private var lastDisplay = Int.MIN_VALUE
 
+    /** 去重状态专用锁：只保护四个字段，绝不在锁里做配置读取或广播 */
+    private val dedupLock = Any()
+
     fun install() {
         val clazz = bridge.findClass("android.view.InputEventReceiver", classLoader)
             ?: runCatching { Class.forName("android.view.InputEventReceiver") }.getOrNull()
@@ -64,19 +67,16 @@ class InputEventHook(
     }
 
     /**
-     * 必须同步：真机上 InputDispatcher 的多个 monitor 通道会在不同线程同时回调
-     * （实测一次点击 3 个线程），去重状态 lastTime/lastX/lastY 需要互斥访问，
-     * 否则同一个 ACTION_DOWN 会漏过好几份广播。
+     * 只有按下事件才需要处理。
+     *
+     * 长截图 / 列表滑动会连续产生大量 ACTION_MOVE，而 InputDispatcher 的多个
+     * monitor 通道（真机实测 3 个线程）还会各回调一次。如果把取锁、读配置、
+     * 拼日志这些事放在动作过滤之前，滑动时每秒几百次无谓开销会直接把输入分发
+     * 拖慢，表现就是长截图卡顿。所以第一件事永远是「这是不是按下」。
+     *
+     * 去重状态 lastTime/lastX/lastY 仍需互斥：多个 monitor 线程会同时进来。
      */
-    @Synchronized
     private fun handle(args: Array<Any?>) {
-        // 设置页改动开关后，5 秒节流的 XSP 刷新保证 system_server 拿到最新配置
-        runCatching { ConfigStore.maybeRefresh(Contexts.any()) }
-        val cfg = ConfigStore.value
-        enterTrace("enter n=${args.size} enabled=${cfg.enabled} " +
-            args.joinToString(",") { it?.javaClass?.simpleName ?: "null" })
-        if (!cfg.enabled) return
-
         var eventIndex = -1
         var i = 0
         while (i < args.size) {
@@ -92,6 +92,17 @@ class InputEventHook(
         val action = event.actionMasked
         if (action != MotionEvent.ACTION_DOWN && action != MotionEvent.ACTION_POINTER_DOWN) return
 
+        // 设置页改动开关后，5 秒节流刷新保证 system_server 拿到最新配置。
+        // 必须异步：refresh() 里有 ContentProvider Binder 调用，压在输入线程上
+        // 会让每次按下多等 5~20ms。
+        runCatching { ConfigStore.maybeRefreshAsync(Contexts.any()) }
+        val cfg = ConfigStore.value
+        if (!cfg.enabled) return
+        enterTrace {
+            "enter n=${args.size} enabled=${cfg.enabled} " +
+                args.joinToString(",") { it?.javaClass?.simpleName ?: "null" }
+        }
+
         // 多指：直接取该 pointer 的 display 坐标（getRawX(int) 自 API 29 起公开）
         val index = event.actionIndex
         val x = event.getRawX(index)
@@ -104,13 +115,15 @@ class InputEventHook(
         val time = event.eventTime
 
         // 同一事件可能被 InputDispatcher 的多个 monitor 重复投递，8ms 内去重
-        if (displayId == lastDisplay && abs(time - lastTime) < 8L &&
-            abs(x - lastX) < 1f && abs(y - lastY) < 1f
-        ) return
-        lastTime = time
-        lastX = x
-        lastY = y
-        lastDisplay = displayId
+        synchronized(dedupLock) {
+            if (displayId == lastDisplay && abs(time - lastTime) < 8L &&
+                abs(x - lastX) < 1f && abs(y - lastY) < 1f
+            ) return
+            lastTime = time
+            lastX = x
+            lastY = y
+            lastDisplay = displayId
+        }
 
         val ev = TouchEvent(x, y, displayId, time)
         val global = cfg.globalEffect || cfg.gateMode == Config.GATE_ALWAYS
@@ -162,9 +175,9 @@ class InputEventHook(
     private var enterCount = 0
 
     /** 限流诊断：确认 dispatchInputEvent 是否真的被调到（任何输入事件） */
-    private fun enterTrace(msg: String) {
+    private inline fun enterTrace(msg: () -> String) {
         if (enterCount++ > 6) return
-        bridge.log("[$label] $msg")
+        bridge.log("[$label] ${msg()}")
     }
 
     /** 限流诊断：写入 LSPosed 模块日志，确认输入 Hook 是否真的命中 */

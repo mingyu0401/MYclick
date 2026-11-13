@@ -32,6 +32,12 @@ object FrameworkRuntime {
     @Synchronized
     fun install(bridge: HookBridge, classLoader: ClassLoader?) {
         if (installed) return
+        // 双保险：全屏宿主只能存在于 system_server。system:ui 之类的系统子进程
+        // 一旦也走到这里，就会多出一个常驻全屏图层并重复绘制。
+        if (!HookGate.isSystemServer) {
+            bridge.log("[android] 非 system_server 进程 ${HookGate.processName}，跳过全局宿主")
+            return
+        }
         installed = true
         ConfigStore.refreshAsync(Contexts.any())
         tryRegister(Contexts.any())
