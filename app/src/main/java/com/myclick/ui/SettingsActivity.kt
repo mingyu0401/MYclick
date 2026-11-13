@@ -1,5 +1,6 @@
 package com.myclick.ui
 
+import android.accessibilityservice.AccessibilityServiceInfo
 import android.animation.ValueAnimator
 import android.app.Activity
 import android.app.AlertDialog
@@ -18,6 +19,7 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewOutlineProvider
+import android.view.accessibility.AccessibilityManager
 import android.view.animation.DecelerateInterpolator
 import android.view.animation.OvershootInterpolator
 import android.widget.EditText
@@ -27,6 +29,8 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import com.myclick.R
+import com.myclick.access.AccessibilityFxHost
+import com.myclick.access.ClickAccessibilityService
 import com.myclick.core.Config
 import com.myclick.core.GlobalTouchReceiver
 import com.myclick.core.PackageDetector
@@ -369,6 +373,45 @@ class SettingsActivity : Activity() {
         )
         box.addView(Ui.body(this, "⚠ 全局显示可能会厌烦，慎重打开；默认关闭，仅在录屏时显示特效。"))
 
+        box.addView(Ui.sectionLabel(this, "普通用户模式（免 Xposed）"))
+        box.addView(
+            Ui.group(
+                this,
+                Ui.switchRow(
+                    this,
+                    "纯悬浮窗模式",
+                    "不需要 root / LSPosed，用无障碍服务取点击位置",
+                    config.overlayOnly,
+                    confirmOnEnable = "不需要 root、不需要 LSPosed，靠无障碍服务拿到被点控件的位置，" +
+                        "再用悬浮窗绘制特效。\n\n需要两步授权：" +
+                        "\n1. 允许「显示在其他应用上层」\n2. 在系统「无障碍」里开启「MYclick 点击特效」" +
+                        "\n\n副作用：只能识别被点击的控件，点空白区域或游戏自绘界面可能没有特效，" +
+                        "触发也比框架模式略晚一帧。"
+                ) {
+                    config = config.copy(overlayOnly = it); save()
+                    if (it && !accessibilityServiceEnabled()) {
+                        AlertDialog.Builder(this)
+                            .setTitle("还差一步")
+                            .setMessage("纯悬浮窗模式需要开启无障碍服务，现在去系统设置里开启吗？")
+                            .setPositiveButton("去开启") { _, _ -> openAccessibilitySettings() }
+                            .setNegativeButton("稍后", null)
+                            .show()
+                    }
+                }
+            )
+        )
+        box.addView(
+            Ui.actionRow(this, "打开无障碍设置", "系统设置 → 无障碍 → MYclick 点击特效") {
+                openAccessibilitySettings()
+            }
+        )
+        box.addView(
+            Ui.body(
+                this,
+                "开启纯悬浮窗模式后，「全局生效」和录屏内特效都会自动让位给它，避免两份特效叠在一起。"
+            )
+        )
+
         box.addView(Ui.primaryButton(this, "保存并推送配置") {
             applyTargetFields()
             TouchRelay.sendConfig(this, config)
@@ -631,6 +674,8 @@ class SettingsActivity : Activity() {
         globalRows.forEach { Ui.syncSwitch(it, config.globalEffect) }
         syncGlobalReceiver()
         ensureOverlayPermission()
+        // 纯悬浮窗宿主就在本进程：开关变化直接同步；关闭时会立刻撤掉常驻窗口
+        runCatching { AccessibilityFxHost.sync(this, config) }
     }
 
     /**
@@ -654,7 +699,7 @@ class SettingsActivity : Activity() {
     }
 
     private fun ensureOverlayPermission() {
-        if (!config.globalEffect || overlayGrantAttempted) return
+        if ((!config.globalEffect && !config.overlayOnly) || overlayGrantAttempted) return
         if (Settings.canDrawOverlays(this)) return
         overlayGrantAttempted = true
         Thread {
@@ -703,6 +748,25 @@ class SettingsActivity : Activity() {
             .show()
     }
 
+    /** 纯悬浮窗模式依赖的无障碍服务是否已被系统启用 */
+    private fun accessibilityServiceEnabled(): Boolean = runCatching {
+        val manager = getSystemService(AccessibilityManager::class.java) ?: return false
+        val target = "$packageName/${ClickAccessibilityService::class.java.name}"
+        manager.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK)
+            .any { info ->
+                val si = info.resolveInfo?.serviceInfo ?: return@any false
+                "${si.packageName}/${si.name}" == target
+            }
+    }.getOrDefault(false)
+
+    private fun openAccessibilitySettings() {
+        runCatching {
+            startActivity(
+                Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+        }.onFailure { toast("无法打开无障碍设置，请手动前往系统设置") }
+    }
+
     private fun grantOverlay() {
         val status = ShizukuBridge.probe(this)
         val pkg = config.targetPackage
@@ -739,8 +803,8 @@ class SettingsActivity : Activity() {
     }
 
     private fun versionName(): String = runCatching {
-        packageManager.getPackageInfo(packageName, 0).versionName ?: "1.0.3"
-    }.getOrDefault("1.0.3")
+        packageManager.getPackageInfo(packageName, 0).versionName ?: "1.0.4"
+    }.getOrDefault("1.0.4")
 
     private fun toast(text: String) {
         android.widget.Toast.makeText(this, text, android.widget.Toast.LENGTH_SHORT).show()

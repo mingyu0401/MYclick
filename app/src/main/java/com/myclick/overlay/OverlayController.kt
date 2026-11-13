@@ -37,7 +37,9 @@ import kotlin.math.abs
 class OverlayController(
     private val baseContext: Context,
     /** true = 模块自身进程的「全局生效」宿主：只认总开关，不走录屏状态门控 */
-    private val globalHost: Boolean = false
+    private val globalHost: Boolean = false,
+    /** true = 「纯悬浮窗模式」宿主：由无障碍服务驱动，免 Xposed */
+    private val overlayOnlyHost: Boolean = false
 ) {
 
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -150,10 +152,12 @@ class OverlayController(
             // 录屏进程的宿主：全局模式下只要全局宿主已经确认接管（GlobalOwner），
             // 就撤掉自己的窗口，物理上保证不可能再叠一份；全局宿主还没接管
             // （刚开机 / 正在挂窗口）时先留着，随时接住这一击。
-            val want = if (globalHost) {
-                cfg.enabled && global
-            } else {
-                cfg.enabled && (!global || !GlobalOwner.owned)
+            val want = when {
+                // 纯悬浮窗模式：只在开关打开时挂窗口，和录屏 / 全局模式都无关
+                overlayOnlyHost -> cfg.enabled && cfg.overlayOnly
+                // 全局宿主：纯悬浮窗模式打开时让位，避免两套宿主各画一份
+                globalHost -> cfg.enabled && global && !cfg.overlayOnly
+                else -> cfg.enabled && !cfg.overlayOnly && (!global || !GlobalOwner.owned)
             }
             if (want) attach(cfg) else detach()
         }
@@ -191,14 +195,16 @@ class OverlayController(
         // 录屏进程内的宿主用三重门控：总开关、事件级归属标记、是否真的在录屏。
         // 这里刻意不读 cfg.globalEffect：录屏 App 常驻后台时该值可能是旧快照，
         // 而归属标记跟着每一次点击的事件走，才是唯一权威。
+        // 纯悬浮窗模式有一个独立宿主（无障碍驱动），此时前两者都让位。
         val global = cfg.globalEffect || cfg.gateMode == Config.GATE_ALWAYS
-        val allow = if (globalHost) {
-            cfg.enabled && global
-        } else {
-            // 全局模式且归属未交还 → 一定不画；
-            // 归属交还（全局宿主还没挂好）时即使配置写着全局也要接住这一击。
-            cfg.enabled && !GlobalOwner.owned && RecordingState.isActive() &&
-                (!global || GlobalOwner.handedBack)
+        val allow = when {
+            overlayOnlyHost -> cfg.enabled && cfg.overlayOnly
+            globalHost -> cfg.enabled && global && !cfg.overlayOnly
+            else ->
+                // 全局模式且归属未交还 → 一定不画；
+                // 归属交还（全局宿主还没挂好）时即使配置写着全局也要接住这一击。
+                cfg.enabled && !cfg.overlayOnly && !GlobalOwner.owned &&
+                    RecordingState.isActive() && (!global || GlobalOwner.handedBack)
         }
         if (!allow) return
         // AUTO 模式下可能同时收到 framework / app-scoped / 多 monitor 通道的多份，

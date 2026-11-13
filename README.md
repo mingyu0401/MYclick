@@ -4,7 +4,7 @@
 
 **把 ColorOS / 一加「屏幕录制」里那个朴素的白色圆点，<br/>换成会扩散、会旋转、会迸出火花的点击特效**
 
-[![Release](https://img.shields.io/badge/Release-v1.0.3-F9A86C?style=flat-square)](https://github.com/mingyu0401/MYclick/releases)
+[![Release](https://img.shields.io/badge/Release-v1.0.4-F9A86C?style=flat-square)](https://github.com/mingyu0401/MYclick/releases)
 [![Platform](https://img.shields.io/badge/Platform-Android%2012%2B-3DDC84?style=flat-square)](#-兼容性)
 [![Framework](https://img.shields.io/badge/Framework-LSPosed-647589?style=flat-square)](#-快速开始)
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.2.0-7F52FF?style=flat-square)](#-从源码构建)
@@ -77,12 +77,12 @@
 
 | 渠道 | 文件 |
 | --- | --- |
-| **GitHub Releases**（推荐） | [MYclick-1.0.3-release.apk](https://github.com/mingyu0401/MYclick/releases/latest) |
-| 仓库内直链 | [download/MYclick-1.0.3-release.apk](https://github.com/mingyu0401/MYclick/raw/main/download/MYclick-1.0.3-release.apk) |
+| **GitHub Releases**（推荐） | [MYclick-1.0.4-release.apk](https://github.com/mingyu0401/MYclick/releases/latest) |
+| 仓库内直链 | [download/MYclick-1.0.4-release.apk](https://github.com/mingyu0401/MYclick/raw/main/download/MYclick-1.0.4-release.apk) |
 
 > **测试与日常使用统一使用 release 包**（复用 debug 签名，可直接覆盖安装）。
-> 当前版本 **v1.0.3**；v1.0.0 / v1.0.1 / v1.0.2 保留为历史版本，`latest` 已指向 v1.0.3。
-> SHA-256：`b30b6f6cd27c8ebc6b92593d4778d133aa742333141ac5c8155a7659034e4c17`
+> 当前版本 **v1.0.4**；v1.0.0 / v1.0.1 / v1.0.2 / v1.0.3 保留为历史版本，`latest` 已指向 v1.0.4。
+> SHA-256：`092434314c39dd4da2805980bdb1560be83f9185ee069098a92a24ab4e86ebac`
 
 ---
 
@@ -92,7 +92,7 @@
 <summary><b>① 安装</b></summary>
 
 ```bash
-adb install -r download/MYclick-1.0.3-release.apk
+adb install -r download/MYclick-1.0.4-release.apk
 adb shell pm list packages -s | grep -i screenrecord   # 确认录屏包名
 ```
 
@@ -157,7 +157,7 @@ ColorOS 会过滤普通 App 的 `android.util.Log`，**优先看 LSPosed 管理�
 | :---: | :---: | :---: |
 | <img src="docs/images/ui-home.jpg" width="210" alt="设置页首页"/> | <img src="docs/images/ui-fx.jpg" width="210" alt="设置页特效"/> | <img src="docs/images/ui-about.jpg" width="210" alt="设置页关于"/> |
 
-*真机截图 · 一加 PLK110 / Android 17 / ColorOS 17 · v1.0.3 release 包*
+*真机截图 · 一加 PLK110 / Android 17 / ColorOS 17 · v1.0.4 release 包*
 
 底部导航带滑动高亮胶囊：切页时旧页淡出横移、新页淡入，图标弹性缩放、文字颜色渐变；
 主卡右侧图标与 App 启动图标共用同一个矢量资源，圆形裁切后自然融入卡片。
@@ -214,6 +214,18 @@ export ANDROID_HOME=/path/to/Android/Sdk     # Windows 可写 local.properties
 | 隐藏原生圆点 / DPR 上限 2x | 开 / 开 | 钳 `show_touches=0`；关闭 DPR 上限按真实 density 渲染 |
 | 目标 / 附加包名 | 自动识别本机录屏包 | 打开设置页即探测并自动填入；可手动覆盖 / 重新探测 |
 | 调色板 8 项 | 见规格表 | 深色 / 浅色各 4 个 `#RRGGBB` |
+| **纯悬浮窗模式** | **关** | 给没有 root / LSPosed 的普通用户：用无障碍服务取被点控件的屏幕位置，再用 `TYPE_APPLICATION_OVERLAY` 窗口画特效。开启后「全局生效」和录屏内特效自动让位，不会叠画。局限：只能识别被点控件，点空白区域或游戏自绘界面可能没有特效 |
+
+### 纯悬浮窗模式（普通用户）
+
+不需要 root、不需要 LSPosed、不需要勾系统框架作用域，普通安装即可用：
+
+1. 设置页首页 →「普通用户模式（免 Xposed）」→ 打开「纯悬浮窗模式」
+2. 允许「显示在其他应用上层」
+3. 在系统「无障碍」里开启「MYclick 点击特效」（设置页有「打开无障碍设置」直达）
+
+服务只取被点击控件的 `getBoundsInScreen()` 来定位特效，**不读取、不采集、不上传任何文字或页面内容**；
+关闭开关后窗口立即撤掉，不常驻任何图层。
 
 ---
 

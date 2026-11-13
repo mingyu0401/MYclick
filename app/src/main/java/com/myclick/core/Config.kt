@@ -15,6 +15,7 @@ data class Config(
     val touchSource: Int = SOURCE_AUTO,
     val gateMode: Int = GATE_AUTO,
     val globalEffect: Boolean = false,       // 全局生效：未录屏时也显示点击特效（默认关闭）
+    val overlayOnly: Boolean = false,        // 纯悬浮窗模式：普通用户用无障碍服务取点击位置（默认关闭）
     val hideNativeDot: Boolean = true,       // 强制 show_touches=0，隐藏原生白点
     val dprCapEnabled: Boolean = true,       // DPR 上限 2x
     val targetPackage: String = DEFAULT_TARGET,
@@ -71,6 +72,7 @@ data class Config(
                 touchSource = b.getInt("touchSource", d.touchSource),
                 gateMode = b.getInt("gateMode", d.gateMode),
                 globalEffect = b.getBoolean("globalEffect", d.globalEffect),
+                overlayOnly = b.getBoolean("overlayOnly", d.overlayOnly),
                 hideNativeDot = b.getBoolean("hideNativeDot", d.hideNativeDot),
                 dprCapEnabled = b.getBoolean("dprCapEnabled", d.dprCapEnabled),
                 targetPackage = b.getString("targetPackage") ?: d.targetPackage,
@@ -96,6 +98,7 @@ data class Config(
         putInt("touchSource", touchSource)
         putInt("gateMode", gateMode)
         putBoolean("globalEffect", globalEffect)
+        putBoolean("overlayOnly", overlayOnly)
         putBoolean("hideNativeDot", hideNativeDot)
         putBoolean("dprCapEnabled", dprCapEnabled)
         putString("targetPackage", targetPackage)

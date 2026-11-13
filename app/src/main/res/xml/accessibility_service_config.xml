@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    「纯悬浮窗模式」的无障碍服务配置。
+
+    事件只订阅点击 / 长按点击：每来一次事件，用被点控件的屏幕 bounds 中心作为特效位置。
+    纯无障碍方案拿不到原始触摸坐标（那是系统输入层的权限），控件中心是最接近的近似。
+
+    canRetrieveWindowContent 必须为 true 才能拿到 source 节点的 bounds；
+    这不代表会上传或采集任何内容 —— 服务里只调用 getBoundsInScreen()，不读 text。
+-->
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accessibilityEventTypes="typeViewClicked|typeViewLongClicked"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:accessibilityFlags="flagDefault"
+    android:canRetrieveWindowContent="true"
+    android:description="@string/accessibility_desc"
+    android:notificationTimeout="0"
+    android:settingsActivity="com.myclick.ui.SettingsActivity" />

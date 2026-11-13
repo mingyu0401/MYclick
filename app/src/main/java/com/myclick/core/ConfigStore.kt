@@ -172,6 +172,7 @@ object ConfigStore {
                 touchSource = int("touchSource", d.touchSource),
                 gateMode = int("gateMode", d.gateMode),
                 globalEffect = bool("globalEffect", d.globalEffect),
+                overlayOnly = bool("overlayOnly", d.overlayOnly),
                 hideNativeDot = bool("hideNativeDot", d.hideNativeDot),
                 dprCapEnabled = bool("dprCapEnabled", d.dprCapEnabled),
                 targetPackage = str("targetPackage", d.targetPackage),

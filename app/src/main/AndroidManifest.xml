@@ -32,6 +32,21 @@
             </intent-filter>
         </activity>
 
+        <!-- 纯悬浮窗模式：给没有 LSPosed 的普通用户用无障碍服务取点击位置。
+             系统只在用户于「无障碍」里手动授权后才会绑定，未授权时零开销。 -->
+        <service
+            android:name=".access.ClickAccessibilityService"
+            android:exported="true"
+            android:label="@string/accessibility_label"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/accessibility_service_config" />
+        </service>
+
         <!-- 配置共享：被 Hook 进程通过 ContentResolver.call() 读取 -->
         <!-- 不加 android:permission：system_server / 录屏进程需要能直接 call 到它 -->
         <provider
