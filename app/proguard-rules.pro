@@ -25,6 +25,8 @@
 -keep class com.myclick.overlay.** { *; }
 -keep class com.myclick.fx.** { *; }
 -keep class com.myclick.ui.** { *; }
+# shell 绘制进程由 app_process 按类名字符串启动，不能被重命名/裁剪
+-keep class com.myclick.shell.** { *; }
 
 # ContentProvider 通过反射/Call 暴露，保留方法名
 -keepclassmembers class com.myclick.core.ConfigProvider { public *; }

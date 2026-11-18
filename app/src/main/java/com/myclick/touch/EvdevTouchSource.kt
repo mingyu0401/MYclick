@@ -5,7 +5,7 @@ import android.os.SystemClock
 import android.util.DisplayMetrics
 import android.view.Surface
 import android.view.WindowManager
-import com.myclick.access.LocalFxHost
+import com.myclick.access.ShellFxHost
 import com.myclick.core.Config
 import com.myclick.core.Prefs
 import com.myclick.core.Trace
@@ -63,9 +63,8 @@ object EvdevTouchSource {
         if (worker != null) return
         val app = context.applicationContext ?: context
         Trace.log(context, "evdev", "start 请求，转到后台探测提权")
-        // 录制状态监听与触摸监听同生共死：没有它就没法区分「录屏中」和「日常使用」，
-        // 关了「全局生效」也会满屏出特效。
-        RecorderWatcher.start(app, config.targetPackage)
+        // 绘制端在 shell 进程里，这里先把进程拉起来并同步一次配置
+        ShellFxHost.sync(app, config)
         worker = Thread({ boot(app) }, "MYclick-Evdev").apply {
             isDaemon = true
             start()
@@ -80,7 +79,8 @@ object EvdevTouchSource {
         worker?.interrupt()
         worker = null
         running = false
-        RecorderWatcher.stop()
+        // 录制状态由 shell 进程自己轮询，这里不需要再管
+
     }
 
     fun onConfigChanged(context: Context, config: Config) {
@@ -175,7 +175,8 @@ object EvdevTouchSource {
         val c = cfg ?: runCatching { Prefs.read(context) }.getOrNull() ?: return
         if (!c.enabled || !c.shizukuMode) return
         val mapped = mapToScreen(context, dev, rawX, rawY) ?: return
-        LocalFxHost.emit(context, c, mapped.first, mapped.second, SystemClock.uptimeMillis())
+        // 「是否在录屏 / 是否全局生效」由 shell 绘制进程自己判断，这里只管把坐标送过去
+        ShellFxHost.emit(mapped.first, mapped.second)
         Trace.log(context, "evdev", "tap raw=($rawX,$rawY) -> (${mapped.first},${mapped.second})")
     }
 

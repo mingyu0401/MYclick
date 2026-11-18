@@ -29,9 +29,19 @@ object PrivilegedShell {
     /** 统一的进程句柄：Shizuku 的远端进程和本地 su 进程都能包成它 */
     class Handle(
         val input: InputStream,
+        /** 进程 stdin；为 null 表示这条通道拿不到写端 */
+        val output: java.io.OutputStream? = null,
         private val closer: () -> Unit,
         private val waiter: () -> Int
     ) {
+        /** 往子进程写一行命令；失败时返回 false，由调用方决定是否重启 */
+        fun send(line: String): Boolean = runCatching {
+            val out = output ?: return false
+            out.write((line + "\n").toByteArray())
+            out.flush()
+            true
+        }.getOrDefault(false)
+
         fun destroy() {
             runCatching { closer() }
         }
@@ -93,15 +103,18 @@ object PrivilegedShell {
                         ?: return null
                     val rp = service.newProcess(arrayOf(*cmd), null, null) ?: return null
                     val stream = ParcelFileDescriptor.AutoCloseInputStream(rp.getInputStream())
+                    val sink = runCatching {
+                        rp.outputStream?.let { ParcelFileDescriptor.AutoCloseOutputStream(it) }
+                    }.getOrNull()
                     Trace.log(context, "shell", "shizuku open ${cmd.joinToString(" ")}")
-                    Handle(stream, { rp.destroy() }, { rp.waitFor() })
+                    Handle(stream, sink, { rp.destroy() }, { rp.waitFor() })
                 }
                 Backend.ROOT -> {
                     val p = ProcessBuilder("su", "-c", cmd.joinToString(" "))
                         .redirectErrorStream(false)
                         .start()
                     Trace.log(context, "shell", "root open ${cmd.joinToString(" ")}")
-                    Handle(p.inputStream, { p.destroy() }, { p.waitFor() })
+                    Handle(p.inputStream, p.outputStream, { p.destroy() }, { p.waitFor() })
                 }
                 Backend.NONE -> {
                     Trace.log(context, "shell", "no backend for ${cmd.joinToString(" ")}")
@@ -141,14 +154,17 @@ object PrivilegedShell {
                         ?: return null
                     val rp = service.newProcess(arrayOf("sh", "-c", script), null, null) ?: return null
                     val stream = ParcelFileDescriptor.AutoCloseInputStream(rp.getInputStream())
-                    Handle(stream, { rp.destroy() }, { rp.waitFor() })
+                    val sink = runCatching {
+                        rp.outputStream?.let { ParcelFileDescriptor.AutoCloseOutputStream(it) }
+                    }.getOrNull()
+                    Handle(stream, sink, { rp.destroy() }, { rp.waitFor() })
                 }
                 Backend.ROOT -> {
                     val quoted = script.replace("'", "'\\''")
                     val p = ProcessBuilder("su", "-c", "sh -c '$quoted'")
                         .redirectErrorStream(false)
                         .start()
-                    Handle(p.inputStream, { p.destroy() }, { p.waitFor() })
+                    Handle(p.inputStream, p.outputStream, { p.destroy() }, { p.waitFor() })
                 }
                 Backend.NONE -> null
             }

@@ -4,7 +4,7 @@
 
 **把 ColorOS / 一加「屏幕录制」里那个朴素的白色圆点，<br/>换成会扩散、会旋转、会迸出火花的点击特效**
 
-[![Release](https://img.shields.io/badge/Release-v1.0.9-F9A86C?style=flat-square)](https://github.com/mingyu0401/MYclick/releases)
+[![Release](https://img.shields.io/badge/Release-v1.0.10-F9A86C?style=flat-square)](https://github.com/mingyu0401/MYclick/releases)
 [![Platform](https://img.shields.io/badge/Platform-Android%2012%2B-3DDC84?style=flat-square)](#-兼容性)
 [![Framework](https://img.shields.io/badge/Framework-LSPosed-647589?style=flat-square)](#-快速开始)
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.2.0-7F52FF?style=flat-square)](#-从源码构建)
@@ -33,7 +33,7 @@
 | | |
 | :--- | :--- |
 | 🎯 **全屏真实坐标** | 从系统框架的 `InputEventReceiver#dispatchInputEvent` 取全局 `ACTION_DOWN`，点任何 App 都有特效，不消费事件 |
-| 🎬 **真的录得进去** | `TYPE_APPLICATION_OVERLAY` + 透明 `SurfaceView`，走 SurfaceFlinger 合成链；**不设 `FLAG_SECURE`**，也**绝不往 AUTO_MIRROR 虚拟屏加窗口** |
+| 🎬 **真的录得进去** | 框架模式用 `TYPE_APPLICATION_OVERLAY` + 透明 `SurfaceView`；Shizuku 模式用 shell 身份的 `SurfaceControl` 图层。两者都走 SurfaceFlinger 合成链且**不设 `FLAG_SECURE`**，也**绝不往 AUTO_MIRROR 虚拟屏加窗口** |
 | ⚡ **60fps 零分配** | `Choreographer` 驱动、粒子对象池 + swap-remove、`Paint`/`Path` 复用、`dt` 钳 50ms，无粒子立即停帧清屏 |
 | 🎨 **完全可配** | SCALE、动画速度、深浅主题、8 项调色板、目标包名、触摸来源、全局生效开关，改完即时广播生效 |
 | 📱 **自动识别录屏 App** | 打开设置页即探测本机真实安装的屏幕录制包名并自动填入目标包名，换机 / 换 ROM 无需手填 |
@@ -77,12 +77,12 @@
 
 | 渠道 | 文件 |
 | --- | --- |
-| **GitHub Releases**（推荐） | [MYclick-1.0.9-release.apk](https://github.com/mingyu0401/MYclick/releases/latest) |
-| 仓库内直链 | [download/MYclick-1.0.9-release.apk](https://github.com/mingyu0401/MYclick/raw/main/download/MYclick-1.0.9-release.apk) |
+| **GitHub Releases**（推荐） | [MYclick-1.0.10-release.apk](https://github.com/mingyu0401/MYclick/releases/latest) |
+| 仓库内直链 | [download/MYclick-1.0.10-release.apk](https://github.com/mingyu0401/MYclick/raw/main/download/MYclick-1.0.10-release.apk) |
 
 > **测试与日常使用统一使用 release 包**（复用 debug 签名，可直接覆盖安装）。
-> 当前版本 **v1.0.9**，`latest` 已指向它；v1.0.0 / v1.0.1 / v1.0.2 保留为历史 Release。
-> SHA-256：`b3d880dbc025de4911560756a60d9874ab8b2d915f2b034d926c73c655b01c8a`
+> 当前版本 **v1.0.10**；v1.0.0 / v1.0.1 / v1.0.2 保留为历史 Release。
+> SHA-256：`e9f5531c57bb97f7d36d6fa5514fb4eddf51b57c6976dcd2a938f64c4450d8cc`
 
 ---
 
@@ -92,7 +92,7 @@
 <summary><b>① 安装</b></summary>
 
 ```bash
-adb install -r download/MYclick-1.0.9-release.apk
+adb install -r download/MYclick-1.0.10-release.apk
 adb shell pm list packages -s | grep -i screenrecord   # 确认录屏包名
 ```
 
@@ -157,7 +157,7 @@ ColorOS 会过滤普通 App 的 `android.util.Log`，**优先看 LSPosed 管理�
 | :---: | :---: | :---: |
 | <img src="docs/images/ui-home.jpg" width="210" alt="设置页首页"/> | <img src="docs/images/ui-fx.jpg" width="210" alt="设置页特效"/> | <img src="docs/images/ui-about.jpg" width="210" alt="设置页关于"/> |
 
-*真机截图 · 一加 PLK110 / Android 17 / ColorOS 17 · v1.0.9 release 包*
+*真机截图 · 一加 PLK110 / Android 17 / ColorOS 17 · v1.0.10 release 包*
 
 底部导航带滑动高亮胶囊：切页时旧页淡出横移、新页淡入，图标弹性缩放、文字颜色渐变；
 主卡右侧图标与 App 启动图标共用同一个矢量资源，圆形裁切后自然融入卡片。
@@ -214,7 +214,7 @@ export ANDROID_HOME=/path/to/Android/Sdk     # Windows 可写 local.properties
 | 隐藏原生圆点 / DPR 上限 2x | 开 / 开 | 钳 `show_touches=0`；关闭 DPR 上限按真实 density 渲染 |
 | 目标 / 附加包名 | 自动识别本机录屏包 | 打开设置页即探测并自动填入；可手动覆盖 / 重新探测 |
 | 调色板 8 项 | 见规格表 | 深色 / 浅色各 4 个 `#RRGGBB` |
-| **Shizuku 模式** | **关** | 给没有 root / LSPosed 的普通用户，**推荐**。用 Shizuku 以 `shell` 身份读触摸屏设备节点，拿到的是**真实触摸坐标**：点空白处、游戏、视频全屏控件都有特效，位置不偏移，也不会弹「正在读取屏幕内容」。需要 Shizuku 或 root。开启后「全局生效」和录屏内特效自动让位 |
+| **Shizuku 模式** | **关** | 给没有 root / LSPosed 的普通用户，**推荐**。用 Shizuku 以 `shell` 身份读触摸屏设备节点，拿到的是**真实触摸坐标**：点空白处、游戏、视频全屏控件都有特效，位置不偏移，也不会弹「正在读取屏幕内容」。绘制走 shell 身份子进程的 `SurfaceControl` 图层，**没有窗口，也就没有「正在当前页面悬浮显示」提示**。需要 Shizuku 或 root。开启后「全局生效」和录屏内特效自动让位 |
 
 ### Shizuku 模式（免 root，推荐）
 
@@ -222,12 +222,17 @@ export ANDROID_HOME=/path/to/Android/Sdk     # Windows 可写 local.properties
 
 1. 安装 [Shizuku](https://shizuku.rikka.app/)，用「无线调试」或「root」启动它的服务
 2. 设置页首页 →「免 Xposed 模式」→ 打开「Shizuku 模式」，按提示授权
-3. 允许「显示在其他应用上层」
+3. 允许「显示在其他应用上层」（旧版本残留的权限，新版绘制已不再需要窗口）
 
 原理：`shell` 用户属于 `input` 组，可以读 `/dev/input/event*`。模块通过 Shizuku 启动
 `getevent -lt <触摸屏>`，解析 `ABS_MT_POSITION_X/Y` 与 `BTN_TOUCH`，按面板量程线性映射到
 屏幕像素，并按当前屏幕旋转做一次坐标变换。因此它和框架模式一样是**手指真实位置**，
 而不是控件中心。
+
+绘制端是一个以 `shell` 身份运行的 `app_process` 子进程：里面用 `SurfaceControl` 直接向
+SurfaceFlinger 要一个 root 图层来画，**绕开窗口系统** —— 所以 ColorOS 不会再弹
+「正在当前页面悬浮显示」。坐标与配置由 App 进程通过 stdin 的行协议推进去，录制状态由
+子进程自己枚举 `DisplayManager` 判断，App 被系统回收时子进程随 stdin EOF 退出并收掉图层。
 
 > 注意：设备重启后 Shizuku 服务需要重新激活（这是 Shizuku 自身机制）；若设备已 root，
 > 模块会直接走 `su`，不需要 Shizuku。
@@ -257,6 +262,7 @@ export ANDROID_HOME=/path/to/Android/Sdk     # Windows 可写 local.properties
 | v1.0.7 移除无障碍模式 | 无障碍方案有三个改不掉的缺陷：ColorOS 持续提示「正在读取屏幕内容」、特效只能画在控件中心导致位置偏移、大量界面（Compose / Flutter / WebView / 游戏）不上报 `TYPE_VIEW_CLICKED` 而完全没有特效。上一版加回 Shizuku 模式后，无障碍模式已删干净：服务类、`accessibility_service_config.xml`、manifest 声明、`Config.overlayOnly` 全链路与设置页入口一并移除。同时 SCALE 默认值从 1.4 调为 1.0 |
 | v1.0.8 冷启动恢复窗口 | 冷启动后 `LocalFxHost.sync` 从未被调用（只有改配置时才走 `save()`），所以重开 App 会看到窗口不在、事件源空转。改为 `onCreate` 里按配置同步一次，实测冷启动后 `MYclick-FX` 立即存在，`tap raw=(5000,10000) → (312.5,625.0)` 与理论值一致。同时验证了 ColorOS「正在当前页面悬浮显示」提示：改用 `TYPE_TOAST` 挂全屏窗口会被系统拒绝（dumpsys 里不出现窗口），只能继续用 `TYPE_APPLICATION_OVERLAY`；该提示是一次性安全提醒，点过「取消」后反复切换应用均未复现 |
 | v1.0.6 Shizuku 模式 | 新增以 shell 身份读触摸屏的通道。真机实测：`shell` 属 `input` 组，`getevent` 可读 `/dev/input/event7`（`touchpanel`，量程 20351×44351，正好是屏幕 1272×2772 的 16 倍）。`sendevent` 模拟真实触摸验证映射：竖屏 `raw(6000,12000) → (375,750)`、横屏 `raw(6000,12000) → (750,897)`，均与理论值一致；录屏抽帧确认特效出现在手指位置。过程中修掉三个坑：`Shizuku.newProcess()` 在 13.x 已私有（改用 `IShizukuService.newProcess`）、`ShizukuProvider` 必须由 App 自己声明（否则 `pingBinder()` 恒 false）、提权探测必须离开主线程（未授权的 `su` 会阻塞到 ANR）。关闭无障碍后该模式独立工作 |
+| v1.0.10 彻底去掉悬浮窗提示 | ColorOS 对 `TYPE_APPLICATION_OVERLAY` 每次显示都会弹「正在当前页面悬浮显示」，`TYPE_TOAST` 又被系统拒绝，改用 `app_process` 挂窗口则被 WMS 以 `Unknown pid / uid` 挡住（进程没在 AMS 注册，`openSession()` 直接失败）。最终方案：Shizuku 起一个 `shell` 身份的 `app_process` 子进程，进程内用 `SurfaceControl` 建 root 图层直接画 —— 没有窗口、没有 AppOps 操作，真机实测点击特效正常显示、能录进录屏、屏幕上再无任何提示条。踩到的坑：`Choreographer` 在该进程里永远不回调（改 Handler 固定节拍）、ColorOS 的 `ApplicationSharedMemory` 未初始化、`cmd display get-displays` 在受限 SELinux 域下拿不到输出（改用 `DisplayManager` 枚举私有虚屏，仍按 `RecordingScreen` 名字排除 `com.oplus.cast`） |
 | v1.0.9 关闭全局后不再全程出特效 | Shizuku 模式的宿主跑在模块进程里，拿不到录屏进程那套 `RecordingState`，于是之前只按总开关放行 —— 关掉「全局生效」仍然满屏出特效。新增 `RecorderWatcher`：用一个常驻 shell 进程在设备侧轮询 `cmd display get-displays`，按输出里的 `owner <录屏包名>` 判断是否在录屏（每次约 40ms，只在状态翻转时回一行）。**不能按 `dumpsys media_projection` 判断** —— ColorOS 录屏根本不登记那一路会话，而 `com.oplus.cast` 的投屏会长期占着一路，按它判断会一直当作「在录」。实测：待机 `MYclick-FX` 窗口数为 0、点击 `attached=false` 不出粒子；开录 1 秒内翻成 `录制开始，特效放行`、窗口挂上、抽帧可见特效；停录立刻 `录制结束`、窗口归零；「全局生效」打开时不依赖录制状态，待机也常驻绘制 |
 
 <details>
@@ -299,6 +305,8 @@ MYclick/
 │           ├── fx/                         # EffectEngine / EffectSurfaceView
 │           ├── hook/                       # 框架 Hook / 录屏运行时 / 中继 / HookGate
 │           ├── overlay/                    # 悬浮窗 + 虚拟屏过滤 + 多显示器
+│           ├── shell/                      # app_process 绘制进程：SurfaceControl 图层 / 协议 / 录制判定
+│           ├── touch/                      # Shizuku 通道 / 触摸屏探测 / evdev 事件源
 │           └── ui/                         # SettingsActivity / UiKit / 颜色选择 / 底栏切换动画
 ├── LICENSE
 └── README.md

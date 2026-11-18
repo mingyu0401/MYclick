@@ -27,7 +27,7 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import com.myclick.R
-import com.myclick.access.LocalFxHost
+import com.myclick.access.ShellFxHost
 import com.myclick.core.Config
 import com.myclick.core.GlobalTouchReceiver
 import com.myclick.core.PackageDetector
@@ -110,7 +110,7 @@ class SettingsActivity : Activity() {
         syncGlobalReceiver()
         // 冷启动也要按配置恢复本进程宿主：否则只有「改一次配置」才会挂窗口，
         // 用户重开 App 后会以为开关失效了。
-        runCatching { LocalFxHost.sync(this, config) }
+        runCatching { ShellFxHost.sync(this, config) }
         runCatching { Shizuku.addRequestPermissionResultListener(shizukuGrantListener) }
 
         window.statusBarColor = Ui.BG
@@ -695,7 +695,7 @@ class SettingsActivity : Activity() {
         ensureOverlayPermission()
         // 本进程宿主：无障碍 / Shizuku 两种模式共用，开关变化直接同步；
         // 关闭时会立刻撤掉常驻窗口。
-        runCatching { LocalFxHost.sync(this, config) }
+        runCatching { ShellFxHost.sync(this, config) }
         // Shizuku 事件源按开关启停
         runCatching { EvdevTouchSource.onConfigChanged(this, config) }
     }
@@ -881,8 +881,8 @@ class SettingsActivity : Activity() {
     }
 
     private fun versionName(): String = runCatching {
-        packageManager.getPackageInfo(packageName, 0).versionName ?: "1.0.9"
-    }.getOrDefault("1.0.9")
+        packageManager.getPackageInfo(packageName, 0).versionName ?: "1.0.10"
+    }.getOrDefault("1.0.10")
 
     private fun toast(text: String) {
         android.widget.Toast.makeText(this, text, android.widget.Toast.LENGTH_SHORT).show()
