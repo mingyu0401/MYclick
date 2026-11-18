@@ -38,8 +38,8 @@ class OverlayController(
     private val baseContext: Context,
     /** true = 模块自身进程的「全局生效」宿主：只认总开关，不走录屏状态门控 */
     private val globalHost: Boolean = false,
-    /** true = 「纯悬浮窗模式」宿主：由无障碍服务驱动，免 Xposed */
-    private val overlayOnlyHost: Boolean = false
+    /** true = 「Shizuku 模式」宿主：模块 App 进程内绘制，事件由触摸屏设备节点驱动 */
+    private val localHost: Boolean = false
 ) {
 
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -65,19 +65,19 @@ class OverlayController(
     private var appliedConfig: Config? = null
 
     /**
-     * 「纯悬浮窗模式」宿主自己的配置快照。
+     * 本进程宿主自己的配置快照。
      *
      * ConfigStore 只服务于被 Hook 的进程（system_server / 录屏进程），
      * 模块 App 进程里没人调 refresh()，`ConfigStore.value` 永远是默认值，
-     * 其中 `overlayOnly = false` —— 之前无障碍宿主因此永远不挂窗口、也不绘制。
-     * 这里由设置页 / 无障碍服务直接喂进来的配置为准。
+     * 其中 `shizukuMode = false` —— 直接读它会导致宿主永远不挂窗口、也不绘制。
+     * 这里以设置页 / 事件源喂进来的配置为准。
      */
     @Volatile
-    private var overlayOnlyCfg: Config? = null
+    private var localCfg: Config? = null
 
-    /** 当前生效的配置源：无障碍宿主读自己的快照，其余宿主仍读 ConfigStore */
+    /** 当前生效的配置源：本进程宿主读自己的快照，其余宿主仍读 ConfigStore */
     private fun activeCfg(): Config =
-        if (overlayOnlyHost) (overlayOnlyCfg ?: ConfigStore.value) else ConfigStore.value
+        if (localHost) (localCfg ?: ConfigStore.value) else ConfigStore.value
 
     private val displayListener = object : DisplayManager.DisplayListener {
         override fun onDisplayAdded(displayId: Int) {
@@ -168,9 +168,9 @@ class OverlayController(
             // 就撤掉自己的窗口，物理上保证不可能再叠一份；全局宿主还没接管
             // （刚开机 / 正在挂窗口）时先留着，随时接住这一击。
             val want = when {
-                // 纯悬浮窗模式：只在开关打开时挂窗口，和录屏 / 全局模式都无关
-                overlayOnlyHost -> cfg.enabled && cfg.usesLocalHost()
-                // 全局宿主：纯悬浮窗模式打开时让位，避免两套宿主各画一份
+                // 本进程宿主（Shizuku 模式）：只在开关打开时挂窗口，和录屏 / 全局模式都无关
+                localHost -> cfg.enabled && cfg.usesLocalHost()
+                // 全局宿主：Shizuku 模式打开时让位，避免两套宿主各画一份
                 globalHost -> cfg.enabled && global && !cfg.usesLocalHost()
                 else -> cfg.enabled && !cfg.usesLocalHost() && (!global || !GlobalOwner.owned)
             }
@@ -184,7 +184,7 @@ class OverlayController(
     fun updateConfig(cfg: Config) {
         // 同步落地：无障碍回调里先 updateConfig 再 onTouch，
         // 只有在这里同步赋值，紧随其后的 onTouch 同步段才读得到正确配置。
-        if (overlayOnlyHost) overlayOnlyCfg = cfg
+        if (localHost) localCfg = cfg
         mainHandler.post {
             // 配置没变就不要重复 applyConfig：它会重算渲染参数并往主线程再 post
             // 一次 applyFixedSize。归属标记翻转时 updateConfig 的调用会比较频繁，
@@ -206,17 +206,17 @@ class OverlayController(
         com.myclick.core.Diag.log(
             "overlay",
             "onTouch x=${event.xPx} y=${event.yPx} enabled=${cfg.enabled} " +
-                "overlayOnly=${cfg.overlayOnly} host=$globalHost/$overlayOnlyHost " +
+                "shizuku=${cfg.shizukuMode} host=$globalHost/$localHost " +
                 "gate=${cfg.gateMode} active=${RecordingState.isActive()} attached=$attached"
         )
         // 全局宿主只认总开关 + 全局模式；
         // 录屏进程内的宿主用三重门控：总开关、事件级归属标记、是否真的在录屏。
         // 这里刻意不读 cfg.globalEffect：录屏 App 常驻后台时该值可能是旧快照，
         // 而归属标记跟着每一次点击的事件走，才是唯一权威。
-        // 纯悬浮窗模式有一个独立宿主（无障碍驱动），此时前两者都让位。
+        // Shizuku 模式有一个独立宿主（模块进程内，由触摸屏设备节点驱动），此时前两者都让位。
         val global = cfg.globalEffect || cfg.gateMode == Config.GATE_ALWAYS
         val allow = when {
-            overlayOnlyHost -> cfg.enabled && cfg.usesLocalHost()
+            localHost -> cfg.enabled && cfg.usesLocalHost()
             globalHost -> cfg.enabled && global && !cfg.usesLocalHost()
             else ->
                 // 全局模式且归属未交还 → 一定不画；

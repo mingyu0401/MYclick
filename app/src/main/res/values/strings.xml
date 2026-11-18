@@ -2,6 +2,4 @@
 <resources>
     <string name="app_name">MYclick · 录屏点击特效</string>
     <string name="xposed_desc">为 ColorOS 屏幕录制注入 BASpark 风格点击特效（扩散圆 / 双旋转光弧 / 三角火花），替换原生触摸圆点。</string>
-    <string name="accessibility_label">MYclick 点击特效</string>
-    <string name="accessibility_desc">在没有 LSPosed 的情况下，通过点击事件在屏幕上绘制点击特效（扩散圆 / 旋转光弧 / 三角火花）。只读取被点击控件在屏幕上的位置，不采集、不上传任何文字或页面内容。</string>
 </resources>

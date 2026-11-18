@@ -1,6 +1,5 @@
 package com.myclick.ui
 
-import android.accessibilityservice.AccessibilityServiceInfo
 import android.animation.ValueAnimator
 import android.app.Activity
 import android.app.AlertDialog
@@ -19,7 +18,6 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewOutlineProvider
-import android.view.accessibility.AccessibilityManager
 import android.view.animation.DecelerateInterpolator
 import android.view.animation.OvershootInterpolator
 import android.widget.EditText
@@ -30,7 +28,6 @@ import android.widget.ScrollView
 import android.widget.TextView
 import com.myclick.R
 import com.myclick.access.LocalFxHost
-import com.myclick.access.ClickAccessibilityService
 import com.myclick.core.Config
 import com.myclick.core.GlobalTouchReceiver
 import com.myclick.core.PackageDetector
@@ -404,71 +401,31 @@ class SettingsActivity : Activity() {
         box.addView(Ui.body(this, "⚠ 全局显示可能会厌烦，慎重打开；默认关闭，仅在录屏时显示特效。"))
 
         box.addView(Ui.sectionLabel(this, "免 Xposed 模式"))
-
-        var overlayRow: View? = null
-        val shizukuRow = Ui.switchRow(
-            this,
-            "Shizuku 模式",
-            "不需要 root，读触摸屏拿真实坐标（推荐）",
-            config.shizukuMode,
-            confirmOnEnable = "Shizuku 模式以 shell 身份读取触摸屏事件，拿到的是真实触摸坐标：" +
-                "\n· 点空白处、游戏、视频全屏控件都能出特效" +
-                "\n· 位置就是手指按下的地方，不会偏移" +
-                "\n· 不启用无障碍，系统不会弹「正在读取屏幕内容」的提示" +
-                "\n\n前提：已安装 Shizuku 并激活（无线调试或 root 均可，手机重启后需要重新激活）。"
-        ) {
-            config = config.copy(
-                shizukuMode = it,
-                // 两种免 root 模式共用同一个宿主，必须互斥，否则两路事件会画两份
-                overlayOnly = if (it) false else config.overlayOnly
+        box.addView(
+            Ui.group(
+                this,
+                Ui.switchRow(
+                    this,
+                    "Shizuku 模式",
+                    "不需要 root，读触摸屏拿真实坐标",
+                    config.shizukuMode,
+                    confirmOnEnable = "Shizuku 模式以 shell 身份读取触摸屏事件，拿到的是真实触摸坐标：" +
+                        "\n· 点空白处、游戏、视频全屏控件都能出特效" +
+                        "\n· 位置就是手指按下的地方，不会偏移" +
+                        "\n\n前提：已安装 Shizuku 并激活（无线调试或 root 均可，手机重启后需要重新激活）。"
+                ) {
+                    config = config.copy(shizukuMode = it); save()
+                    if (it) afterShizukuEnabled()
+                }
             )
-            save()
-            overlayRow?.let { row -> Ui.syncSwitch(row, config.overlayOnly) }
-            if (it) afterShizukuEnabled()
-        }
-        overlayRow = Ui.switchRow(
-            this,
-            "纯悬浮窗模式",
-            "不需要 root / LSPosed，用无障碍服务取点击位置",
-            config.overlayOnly,
-            confirmOnEnable = "不需要 root、不需要 LSPosed，靠无障碍服务拿到被点控件的位置，" +
-                "再用悬浮窗绘制特效。\n\n需要两步授权：" +
-                "\n1. 允许「显示在其他应用上层」\n2. 在系统「无障碍」里开启「MYclick 点击特效」" +
-                "\n\n副作用：只能识别被点击的控件，点空白区域或游戏自绘界面可能没有特效，" +
-                "位置是控件中心而不是手指位置，部分系统会持续提示正在读取屏幕内容。"
-        ) {
-            config = config.copy(
-                overlayOnly = it,
-                shizukuMode = if (it) false else config.shizukuMode
-            )
-            save()
-            Ui.syncSwitch(shizukuRow, config.shizukuMode)
-            if (it && !accessibilityServiceEnabled()) {
-                AlertDialog.Builder(this)
-                    .setTitle("还差一步")
-                    .setMessage("纯悬浮窗模式需要开启无障碍服务，现在去系统设置里开启吗？")
-                    .setPositiveButton("去开启") { _, _ -> openAccessibilitySettings() }
-                    .setNegativeButton("稍后", null)
-                    .show()
-            }
-        }
-        box.addView(Ui.group(this, shizukuRow, overlayRow))
+        )
         box.addView(
             Ui.actionRow(this, "Shizuku 状态", PrivilegedShell.describe()) {
                 openShizuku()
             }
         )
         box.addView(
-            Ui.actionRow(this, "打开无障碍设置", "系统设置 → 无障碍 → MYclick 点击特效") {
-                openAccessibilitySettings()
-            }
-        )
-        box.addView(
-            Ui.body(
-                this,
-                "两种模式都开启后，「全局生效」和录屏内特效会自动让位，避免两份特效叠在一起。" +
-                    "只能同时启用一个。"
-            )
+            Ui.body(this, "开启后，「全局生效」和录屏内特效会自动让位，避免两份特效叠在一起。")
         )
 
         box.addView(Ui.primaryButton(this, "保存并推送配置") {
@@ -591,7 +548,7 @@ class SettingsActivity : Activity() {
                 Ui.switchRow(this, "启用特效", "关闭后所有 Hook 直接跳过", config.enabled) {
                     config = config.copy(enabled = it); save()
                 },
-                Ui.seekRow(this, "SCALE 大小", "规格默认 1.4", config.scale, 5, 30) {
+                Ui.seekRow(this, "SCALE 大小", "默认 1.0", config.scale, 5, 30) {
                     config = config.copy(scale = it / 10f); save()
                 },
                 Ui.seekRow(this, "动画速度", "1.0 = 60fps 原速", config.speed, 3, 30) {
@@ -761,7 +718,7 @@ class SettingsActivity : Activity() {
     }
 
     private fun ensureOverlayPermission() {
-        if ((!config.globalEffect && !config.overlayOnly) || overlayGrantAttempted) return
+        if ((!config.globalEffect && !config.shizukuMode) || overlayGrantAttempted) return
         if (Settings.canDrawOverlays(this)) return
         overlayGrantAttempted = true
         Thread {
@@ -810,24 +767,6 @@ class SettingsActivity : Activity() {
             .show()
     }
 
-    /** 纯悬浮窗模式依赖的无障碍服务是否已被系统启用 */
-    private fun accessibilityServiceEnabled(): Boolean = runCatching {
-        val manager = getSystemService(AccessibilityManager::class.java) ?: return false
-        val target = "$packageName/${ClickAccessibilityService::class.java.name}"
-        manager.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK)
-            .any { info ->
-                val si = info.resolveInfo?.serviceInfo ?: return@any false
-                "${si.packageName}/${si.name}" == target
-            }
-    }.getOrDefault(false)
-
-    private fun openAccessibilitySettings() {
-        runCatching {
-            startActivity(
-                Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            )
-        }.onFailure { toast("无法打开无障碍设置，请手动前往系统设置") }
-    }
 
     /**
      * 打开 Shizuku 模式后的引导。
@@ -939,8 +878,8 @@ class SettingsActivity : Activity() {
     }
 
     private fun versionName(): String = runCatching {
-        packageManager.getPackageInfo(packageName, 0).versionName ?: "1.0.6"
-    }.getOrDefault("1.0.6")
+        packageManager.getPackageInfo(packageName, 0).versionName ?: "1.0.7"
+    }.getOrDefault("1.0.7")
 
     private fun toast(text: String) {
         android.widget.Toast.makeText(this, text, android.widget.Toast.LENGTH_SHORT).show()

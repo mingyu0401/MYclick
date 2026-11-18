@@ -4,7 +4,7 @@
 
 **把 ColorOS / 一加「屏幕录制」里那个朴素的白色圆点，<br/>换成会扩散、会旋转、会迸出火花的点击特效**
 
-[![Release](https://img.shields.io/badge/Release-v1.0.6-F9A86C?style=flat-square)](https://github.com/mingyu0401/MYclick/releases)
+[![Release](https://img.shields.io/badge/Release-v1.0.7-F9A86C?style=flat-square)](https://github.com/mingyu0401/MYclick/releases)
 [![Platform](https://img.shields.io/badge/Platform-Android%2012%2B-3DDC84?style=flat-square)](#-兼容性)
 [![Framework](https://img.shields.io/badge/Framework-LSPosed-647589?style=flat-square)](#-快速开始)
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.2.0-7F52FF?style=flat-square)](#-从源码构建)
@@ -60,7 +60,7 @@
 
 | 规格 | 实现 |
 | --- | --- |
-| 扩散圆 0 → `26 × SCALE`（默认 1.4），266ms / 16 帧 | `EffectEngine.BASE_RADIUS` / `CIRCLE_FRAMES`，`ease = 1-(1-p)³` |
+| 扩散圆 0 → `26 × SCALE`（默认 1.0），266ms / 16 帧 | `EffectEngine.BASE_RADIUS` / `CIRCLE_FRAMES`，`ease = 1-(1-p)³` |
 | 填充 alpha 0.4 → 0 | `fillAlpha = 0.4*(1-cp)*255` |
 | 双光弧各 `1.1π`，随机起始偏移 / 角速度 `[0, 0.08, 0.1]` | `ARC_SPAN` / `ROT_SPEEDS` |
 | 弧半径按 `[0,1,1.5,2] × SCALE` 向外扩张，383ms / 23 帧 | `SPREAD_RATES` / `ARC_FRAMES` |
@@ -77,12 +77,12 @@
 
 | 渠道 | 文件 |
 | --- | --- |
-| **GitHub Releases**（推荐） | [MYclick-1.0.6-release.apk](https://github.com/mingyu0401/MYclick/releases/latest) |
-| 仓库内直链 | [download/MYclick-1.0.6-release.apk](https://github.com/mingyu0401/MYclick/raw/main/download/MYclick-1.0.6-release.apk) |
+| **GitHub Releases**（推荐） | [MYclick-1.0.7-release.apk](https://github.com/mingyu0401/MYclick/releases/latest) |
+| 仓库内直链 | [download/MYclick-1.0.7-release.apk](https://github.com/mingyu0401/MYclick/raw/main/download/MYclick-1.0.7-release.apk) |
 
 > **测试与日常使用统一使用 release 包**（复用 debug 签名，可直接覆盖安装）。
-> 当前版本 **v1.0.6**；v1.0.0 ~ v1.0.5 保留为历史版本，`latest` 已指向 v1.0.6。
-> SHA-256：`de22b3bf4c5f0eafff69855c2971b0e8c29a7054ba2198a26c15dfc3331baf49`
+> 当前版本 **v1.0.7**；v1.0.0 ~ v1.0.6 保留为历史版本，`latest` 已指向 v1.0.7。
+> SHA-256：`895d65219d1048c0953c13779e8ce215422b2a1516611759c8d4adfdfeea29a6`
 
 ---
 
@@ -92,7 +92,7 @@
 <summary><b>① 安装</b></summary>
 
 ```bash
-adb install -r download/MYclick-1.0.6-release.apk
+adb install -r download/MYclick-1.0.7-release.apk
 adb shell pm list packages -s | grep -i screenrecord   # 确认录屏包名
 ```
 
@@ -157,7 +157,7 @@ ColorOS 会过滤普通 App 的 `android.util.Log`，**优先看 LSPosed 管理�
 | :---: | :---: | :---: |
 | <img src="docs/images/ui-home.jpg" width="210" alt="设置页首页"/> | <img src="docs/images/ui-fx.jpg" width="210" alt="设置页特效"/> | <img src="docs/images/ui-about.jpg" width="210" alt="设置页关于"/> |
 
-*真机截图 · 一加 PLK110 / Android 17 / ColorOS 17 · v1.0.6 release 包*
+*真机截图 · 一加 PLK110 / Android 17 / ColorOS 17 · v1.0.7 release 包*
 
 底部导航带滑动高亮胶囊：切页时旧页淡出横移、新页淡入，图标弹性缩放、文字颜色渐变；
 主卡右侧图标与 App 启动图标共用同一个矢量资源，圆形裁切后自然融入卡片。
@@ -207,7 +207,7 @@ export ANDROID_HOME=/path/to/Android/Sdk     # Windows 可写 local.properties
 | 项 | 默认 | 说明 |
 | --- | --- | --- |
 | 启用特效 | 开 | 热路径实时读取，改后不必重启 |
-| SCALE / 动画速度 | 1.4 / 1.0 | 范围 0.5~3.0 / 0.3~3.0 |
+| SCALE / 动画速度 | 1.0 / 1.0 | 范围 0.5~3.0 / 0.3~3.0 |
 | 主题 | 跟随系统 | 可强制深色 / 浅色 |
 | 触摸事件来源 | 自动 | 自动 / 仅系统框架 / 仅应用作用域 / 仅录屏进程本地 |
 | **全局生效** | **关** | 默认只在录屏时显示；打开后**不录屏也出特效**，由 system_server 里的覆盖层直接绘制，不依赖录屏 App 进程是否在运行。⚠️ 全局显示可能会厌烦，慎重打开（开启前二次确认）。旧版「显示时机 → 始终显示」自动迁移到此开关 |
@@ -215,7 +215,6 @@ export ANDROID_HOME=/path/to/Android/Sdk     # Windows 可写 local.properties
 | 目标 / 附加包名 | 自动识别本机录屏包 | 打开设置页即探测并自动填入；可手动覆盖 / 重新探测 |
 | 调色板 8 项 | 见规格表 | 深色 / 浅色各 4 个 `#RRGGBB` |
 | **Shizuku 模式** | **关** | 给没有 root / LSPosed 的普通用户，**推荐**。用 Shizuku 以 `shell` 身份读触摸屏设备节点，拿到的是**真实触摸坐标**：点空白处、游戏、视频全屏控件都有特效，位置不偏移，也不会弹「正在读取屏幕内容」。需要 Shizuku 或 root。开启后「全局生效」和录屏内特效自动让位 |
-| **纯悬浮窗模式** | **关** | 退化方案：不依赖 Shizuku，用无障碍服务取被点控件的屏幕位置。局限明显——点空白 / 自绘界面常常没有特效、位置是控件中心、ColorOS 会持续提示正在读取屏幕内容。与 Shizuku 模式互斥 |
 
 ### Shizuku 模式（免 root，推荐）
 
@@ -232,17 +231,6 @@ export ANDROID_HOME=/path/to/Android/Sdk     # Windows 可写 local.properties
 
 > 注意：设备重启后 Shizuku 服务需要重新激活（这是 Shizuku 自身机制）；若设备已 root，
 > 模块会直接走 `su`，不需要 Shizuku。
-
-### 纯悬浮窗模式（无障碍，退化方案）
-
-不需要 root、不需要 LSPosed，也不需要 Shizuku：
-
-1. 设置页首页 →「免 Xposed 模式」→ 打开「纯悬浮窗模式」
-2. 允许「显示在其他应用上层」
-3. 在系统「无障碍」里开启「MYclick 点击特效」（设置页有「打开无障碍设置」直达）
-
-服务只取被点击控件的 `getBoundsInScreen()` 来定位特效，**不读取、不采集、不上传任何文字或页面内容**；
-关闭开关后窗口立即撤掉，不常驻任何图层。
 
 ---
 
@@ -266,7 +254,7 @@ export ANDROID_HOME=/path/to/Android/Sdk     # Windows 可写 local.properties
 | 全局生效修复回归 | 2026-11-12：ColorOS 会拦截 system_server 发往普通 App 静态接收器的广播（框架侧 `global sent` 有、App 侧 `recv` 为 0），改为**在 system_server 同进程挂载覆盖层**、ACTION_DOWN 经 TouchBus 直连。软重启后日志 `[android] 全局生效宿主已挂载`，三次点击均有 `global direct` + `overlay onTouch globalHost=true attached=true`；窗口由 `uid=1000 / package=android` 持有；**非录屏状态**短录屏抽帧可见白 → 淡蓝双段光弧 |
 | v1.0.2 叠画修复 | 打开「全局生效」后再开录屏，用户真机确认每次点击只出一份特效。根因是录屏 App 常驻后台时错过了配置推送，快照里 `globalEffect` 仍为 `false`，一开录两套窗口就各画一份；现由 system_server 随每次 `ACTION_DOWN` 下发 `globalOwned` 归属标记，录屏进程收到即让位，归属信息跟着事件走、不再依赖配置同步 |
 | v1.0.3 长截图卡顿修复 | 根因是 `HookGate.isSystemServer` 用 `startsWith("system:")` 判断，把 ColorOS 的 `system:ui` 也当成 system_server，于是在一个 SystemUI 进程里又挂了一套全屏覆盖层 + 输入 Hook（`dumpsys window` 里能看到两条 `MYclick-FX`，session 分别属于 system_server 和 `system:ui`）。改为精确匹配 `system_server` / `system`，并让所有 `system:*` 子进程直接跳过 Hook；同时把输入热路径上的 MOVE 过滤提前、配置刷新改异步、日志改惰性求值，`onDisplayChanged` 只在屏幕密度变化时才重建窗口。修复后 `dumpsys window` 里 `MYclick-FX` 只剩 1 条，session 归属 system_server，点击日志仍为 `global direct` |
-| v1.0.5 纯悬浮窗模式修复 | 两处叠加的根因：① 无障碍服务根本没被启用（`enabled_accessibility_services` 里没有本模块），事件一条都收不到；② 即便启用，`OverlayController` 的门控读的是 `ConfigStore.value`，而该快照只在被 Hook 的进程里刷新，模块 App 进程里恒为默认值 `overlayOnly=false`，于是无障碍宿主既不挂窗口也不绘制。现在无障碍宿主改为持有设置页喂进来的配置快照，并在运行期强制补上 `FLAG_RETRIEVE_INTERACTIVE_WINDOWS`（缺它 `event.source` 恒为 null，拿不到控件 bounds）。真机抽帧确认橙色扩散填充 + 双段淡蓝光弧 + 三角火花正常出现 |
+| v1.0.7 移除无障碍模式 | 无障碍方案有三个改不掉的缺陷：ColorOS 持续提示「正在读取屏幕内容」、特效只能画在控件中心导致位置偏移、大量界面（Compose / Flutter / WebView / 游戏）不上报 `TYPE_VIEW_CLICKED` 而完全没有特效。上一版加回 Shizuku 模式后，无障碍模式已删干净：服务类、`accessibility_service_config.xml`、manifest 声明、`Config.overlayOnly` 全链路与设置页入口一并移除。同时 SCALE 默认值从 1.4 调为 1.0 |
 | v1.0.6 Shizuku 模式 | 新增以 shell 身份读触摸屏的通道。真机实测：`shell` 属 `input` 组，`getevent` 可读 `/dev/input/event7`（`touchpanel`，量程 20351×44351，正好是屏幕 1272×2772 的 16 倍）。`sendevent` 模拟真实触摸验证映射：竖屏 `raw(6000,12000) → (375,750)`、横屏 `raw(6000,12000) → (750,897)`，均与理论值一致；录屏抽帧确认特效出现在手指位置。过程中修掉三个坑：`Shizuku.newProcess()` 在 13.x 已私有（改用 `IShizukuService.newProcess`）、`ShizukuProvider` 必须由 App 自己声明（否则 `pingBinder()` 恒 false）、提权探测必须离开主线程（未授权的 `su` 会阻塞到 ANR）。关闭无障碍后该模式独立工作 |
 
 <details>
