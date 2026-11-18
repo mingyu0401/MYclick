@@ -168,8 +168,11 @@ class OverlayController(
             // 就撤掉自己的窗口，物理上保证不可能再叠一份；全局宿主还没接管
             // （刚开机 / 正在挂窗口）时先留着，随时接住这一击。
             val want = when {
-                // 本进程宿主（Shizuku 模式）：只在开关打开时挂窗口，和录屏 / 全局模式都无关
-                localHost -> cfg.enabled && cfg.usesLocalHost()
+                // 本进程宿主（Shizuku 模式）：开关打开，并且「全局生效」开着或确实在录屏。
+                // 录制状态来自 RecorderWatcher 的 shell 查询；不在录屏时窗口直接撤掉，
+                // 既不会在录屏之外出特效，也不会让一个全屏图层长期盖在别的应用上。
+                localHost ->
+                    cfg.enabled && cfg.usesLocalHost() && (global || RecordingState.isActive())
                 // 全局宿主：Shizuku 模式打开时让位，避免两套宿主各画一份
                 globalHost -> cfg.enabled && global && !cfg.usesLocalHost()
                 else -> cfg.enabled && !cfg.usesLocalHost() && (!global || !GlobalOwner.owned)
@@ -216,7 +219,9 @@ class OverlayController(
         // Shizuku 模式有一个独立宿主（模块进程内，由触摸屏设备节点驱动），此时前两者都让位。
         val global = cfg.globalEffect || cfg.gateMode == Config.GATE_ALWAYS
         val allow = when {
-            localHost -> cfg.enabled && cfg.usesLocalHost()
+            // Shizuku 宿主：录制状态由 RecorderWatcher 通过 shell 查询 media_projection 后写入
+            localHost ->
+                cfg.enabled && cfg.usesLocalHost() && (global || RecordingState.isActive())
             globalHost -> cfg.enabled && global && !cfg.usesLocalHost()
             else ->
                 // 全局模式且归属未交还 → 一定不画；

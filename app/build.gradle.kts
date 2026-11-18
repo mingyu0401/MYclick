@@ -10,8 +10,8 @@ android {
         applicationId = "com.myclick"
         minSdk = 31              // Android 12
         targetSdk = 36
-        versionCode = 9
-        versionName = "1.0.8"
+        versionCode = 10
+        versionName = "1.0.9"
         // 模块本身不需要任何运行时三方库：UI 全部用 framework 控件手写。
     }
 

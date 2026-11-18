@@ -63,6 +63,9 @@ object EvdevTouchSource {
         if (worker != null) return
         val app = context.applicationContext ?: context
         Trace.log(context, "evdev", "start 请求，转到后台探测提权")
+        // 录制状态监听与触摸监听同生共死：没有它就没法区分「录屏中」和「日常使用」，
+        // 关了「全局生效」也会满屏出特效。
+        RecorderWatcher.start(app, config.targetPackage)
         worker = Thread({ boot(app) }, "MYclick-Evdev").apply {
             isDaemon = true
             start()
@@ -77,6 +80,7 @@ object EvdevTouchSource {
         worker?.interrupt()
         worker = null
         running = false
+        RecorderWatcher.stop()
     }
 
     fun onConfigChanged(context: Context, config: Config) {

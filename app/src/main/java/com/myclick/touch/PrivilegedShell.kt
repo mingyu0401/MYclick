@@ -126,4 +126,35 @@ object PrivilegedShell {
             h.destroy()
         }
     }
+
+    /**
+     * 以 shell 身份运行一段脚本（`sh -c`），用于常驻轮询。
+     *
+     * 脚本里不要出现单引号：su 通道要把整段脚本包进单引号里传给 `su -c`，
+     * 含单引号会破坏转义。Shizuku 通道直接按数组传参，不受影响。
+     */
+    fun openScript(context: Context?, script: String): Handle? {
+        return try {
+            when (backend()) {
+                Backend.SHIZUKU -> {
+                    val service = IShizukuService.Stub.asInterface(Shizuku.getBinder())
+                        ?: return null
+                    val rp = service.newProcess(arrayOf("sh", "-c", script), null, null) ?: return null
+                    val stream = ParcelFileDescriptor.AutoCloseInputStream(rp.getInputStream())
+                    Handle(stream, { rp.destroy() }, { rp.waitFor() })
+                }
+                Backend.ROOT -> {
+                    val quoted = script.replace("'", "'\\''")
+                    val p = ProcessBuilder("su", "-c", "sh -c '$quoted'")
+                        .redirectErrorStream(false)
+                        .start()
+                    Handle(p.inputStream, { p.destroy() }, { p.waitFor() })
+                }
+                Backend.NONE -> null
+            }
+        } catch (t: Throwable) {
+            Trace.log(context, "shell", "openScript fail $t")
+            null
+        }
+    }
 }

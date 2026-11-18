@@ -4,7 +4,7 @@
 
 **把 ColorOS / 一加「屏幕录制」里那个朴素的白色圆点，<br/>换成会扩散、会旋转、会迸出火花的点击特效**
 
-[![Release](https://img.shields.io/badge/Release-v1.0.8-F9A86C?style=flat-square)](https://github.com/mingyu0401/MYclick/releases)
+[![Release](https://img.shields.io/badge/Release-v1.0.9-F9A86C?style=flat-square)](https://github.com/mingyu0401/MYclick/releases)
 [![Platform](https://img.shields.io/badge/Platform-Android%2012%2B-3DDC84?style=flat-square)](#-兼容性)
 [![Framework](https://img.shields.io/badge/Framework-LSPosed-647589?style=flat-square)](#-快速开始)
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.2.0-7F52FF?style=flat-square)](#-从源码构建)
@@ -77,12 +77,12 @@
 
 | 渠道 | 文件 |
 | --- | --- |
-| **GitHub Releases**（推荐） | [MYclick-1.0.8-release.apk](https://github.com/mingyu0401/MYclick/releases/latest) |
-| 仓库内直链 | [download/MYclick-1.0.8-release.apk](https://github.com/mingyu0401/MYclick/raw/main/download/MYclick-1.0.8-release.apk) |
+| **GitHub Releases**（推荐） | [MYclick-1.0.9-release.apk](https://github.com/mingyu0401/MYclick/releases/latest) |
+| 仓库内直链 | [download/MYclick-1.0.9-release.apk](https://github.com/mingyu0401/MYclick/raw/main/download/MYclick-1.0.9-release.apk) |
 
 > **测试与日常使用统一使用 release 包**（复用 debug 签名，可直接覆盖安装）。
-> 当前版本 **v1.0.8**，`latest` 已指向它；v1.0.0 / v1.0.1 / v1.0.2 保留为历史 Release。
-> SHA-256：`7f4c9b29bcfa2a6742afe1a0df15eecd4ad63b68af0a9d6162b6f31792f1f0f2`
+> 当前版本 **v1.0.9**，`latest` 已指向它；v1.0.0 / v1.0.1 / v1.0.2 保留为历史 Release。
+> SHA-256：`b3d880dbc025de4911560756a60d9874ab8b2d915f2b034d926c73c655b01c8a`
 
 ---
 
@@ -92,7 +92,7 @@
 <summary><b>① 安装</b></summary>
 
 ```bash
-adb install -r download/MYclick-1.0.8-release.apk
+adb install -r download/MYclick-1.0.9-release.apk
 adb shell pm list packages -s | grep -i screenrecord   # 确认录屏包名
 ```
 
@@ -157,7 +157,7 @@ ColorOS 会过滤普通 App 的 `android.util.Log`，**优先看 LSPosed 管理�
 | :---: | :---: | :---: |
 | <img src="docs/images/ui-home.jpg" width="210" alt="设置页首页"/> | <img src="docs/images/ui-fx.jpg" width="210" alt="设置页特效"/> | <img src="docs/images/ui-about.jpg" width="210" alt="设置页关于"/> |
 
-*真机截图 · 一加 PLK110 / Android 17 / ColorOS 17 · v1.0.8 release 包*
+*真机截图 · 一加 PLK110 / Android 17 / ColorOS 17 · v1.0.9 release 包*
 
 底部导航带滑动高亮胶囊：切页时旧页淡出横移、新页淡入，图标弹性缩放、文字颜色渐变；
 主卡右侧图标与 App 启动图标共用同一个矢量资源，圆形裁切后自然融入卡片。
@@ -257,6 +257,7 @@ export ANDROID_HOME=/path/to/Android/Sdk     # Windows 可写 local.properties
 | v1.0.7 移除无障碍模式 | 无障碍方案有三个改不掉的缺陷：ColorOS 持续提示「正在读取屏幕内容」、特效只能画在控件中心导致位置偏移、大量界面（Compose / Flutter / WebView / 游戏）不上报 `TYPE_VIEW_CLICKED` 而完全没有特效。上一版加回 Shizuku 模式后，无障碍模式已删干净：服务类、`accessibility_service_config.xml`、manifest 声明、`Config.overlayOnly` 全链路与设置页入口一并移除。同时 SCALE 默认值从 1.4 调为 1.0 |
 | v1.0.8 冷启动恢复窗口 | 冷启动后 `LocalFxHost.sync` 从未被调用（只有改配置时才走 `save()`），所以重开 App 会看到窗口不在、事件源空转。改为 `onCreate` 里按配置同步一次，实测冷启动后 `MYclick-FX` 立即存在，`tap raw=(5000,10000) → (312.5,625.0)` 与理论值一致。同时验证了 ColorOS「正在当前页面悬浮显示」提示：改用 `TYPE_TOAST` 挂全屏窗口会被系统拒绝（dumpsys 里不出现窗口），只能继续用 `TYPE_APPLICATION_OVERLAY`；该提示是一次性安全提醒，点过「取消」后反复切换应用均未复现 |
 | v1.0.6 Shizuku 模式 | 新增以 shell 身份读触摸屏的通道。真机实测：`shell` 属 `input` 组，`getevent` 可读 `/dev/input/event7`（`touchpanel`，量程 20351×44351，正好是屏幕 1272×2772 的 16 倍）。`sendevent` 模拟真实触摸验证映射：竖屏 `raw(6000,12000) → (375,750)`、横屏 `raw(6000,12000) → (750,897)`，均与理论值一致；录屏抽帧确认特效出现在手指位置。过程中修掉三个坑：`Shizuku.newProcess()` 在 13.x 已私有（改用 `IShizukuService.newProcess`）、`ShizukuProvider` 必须由 App 自己声明（否则 `pingBinder()` 恒 false）、提权探测必须离开主线程（未授权的 `su` 会阻塞到 ANR）。关闭无障碍后该模式独立工作 |
+| v1.0.9 关闭全局后不再全程出特效 | Shizuku 模式的宿主跑在模块进程里，拿不到录屏进程那套 `RecordingState`，于是之前只按总开关放行 —— 关掉「全局生效」仍然满屏出特效。新增 `RecorderWatcher`：用一个常驻 shell 进程在设备侧轮询 `cmd display get-displays`，按输出里的 `owner <录屏包名>` 判断是否在录屏（每次约 40ms，只在状态翻转时回一行）。**不能按 `dumpsys media_projection` 判断** —— ColorOS 录屏根本不登记那一路会话，而 `com.oplus.cast` 的投屏会长期占着一路，按它判断会一直当作「在录」。实测：待机 `MYclick-FX` 窗口数为 0、点击 `attached=false` 不出粒子；开录 1 秒内翻成 `录制开始，特效放行`、窗口挂上、抽帧可见特效；停录立刻 `录制结束`、窗口归零；「全局生效」打开时不依赖录制状态，待机也常驻绘制 |
 
 <details>
 <summary><b>排障速查表</b></summary>
