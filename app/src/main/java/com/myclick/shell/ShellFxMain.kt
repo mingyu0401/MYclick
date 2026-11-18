@@ -41,6 +41,10 @@ object ShellFxMain {
         val uiMode = context.resources.configuration.uiMode
         val renderer = ShellFxRenderer(context)
         val recorder = ShellRecorderState(context) { on -> handler.post { renderer.setRecording(on) } }
+        // 触摸源也跑在这里：App 进程被 ColorOS 回收后特效仍要继续工作
+        val touch = ShellTouchSource(context) { x, y -> handler.post { renderer.emit(x, y) } }
+        touch.start()
+        ShellPidFile.write()
 
         // 可选启动参数：pkg=<录屏包名> cfg=<配置行>，方便 adb 手工调试
         args.forEach { arg ->
@@ -55,7 +59,7 @@ object ShellFxMain {
             isDaemon = true
             start()
         }
-        println("FX READY uid=${Process.myUid()}")
+        println("FX READY uid=${Process.myUid()} touch=${touch.currentDevice()?.path ?: "探测中"}")
         Looper.loop()
     }
 
@@ -78,11 +82,10 @@ object ShellFxMain {
             println("FX stdin err: $t")
         }
         println("FX stdin eof after $lines lines")
-        // App 关掉了写端（进程被杀 / 主动停止）→ 收掉图层再退出，别留孤儿层
-        handler.post {
-            renderer.release()
-            Looper.getMainLooper().quitSafely()
-        }
+        // 关键：App 被系统回收时写端会 EOF，但这里**不能退出** ——
+        // 用户经常是「打开 App 开好特效 → 退出 App → 去录屏」，退出即失效就等于不能用。
+        // 触摸源、录制判定、绘制都在本进程里，继续跑即可；真正停止只认 App 发来的 quit。
+        println("FX 进入独立运行模式（等待新的 App 连接或 quit）")
     }
 
     /** @return false 表示收到 quit，需要结束读取循环 */
@@ -95,7 +98,14 @@ object ShellFxMain {
     ): Boolean {
         val line = raw.trim()
         if (line.isEmpty()) return true
-        if (line == ShellFxProto.CMD_QUIT) return false
+        if (line == ShellFxProto.CMD_QUIT) {
+            handler.post {
+                renderer.release()
+                ShellPidFile.clear()
+                Looper.getMainLooper().quitSafely()
+            }
+            return false
+        }
 
         when {
             line.startsWith("cfg ") -> {

@@ -4,6 +4,7 @@ import android.content.Context
 import com.myclick.core.Config
 import com.myclick.core.Trace
 import com.myclick.shell.ShellFxProto
+import com.myclick.shell.ShellPidFile
 import com.myclick.touch.PrivilegedShell
 
 /**
@@ -37,6 +38,13 @@ object ShellFxHost {
 
     fun isRunning(): Boolean = handle != null
 
+    /** 设置页状态行 */
+    fun statusText(): String = when {
+        handle != null -> "运行中（后台独立进程）"
+        starting -> "启动中…"
+        else -> "未运行"
+    }
+
     /**
      * 同步当前配置。总开关或 Shizuku 模式关掉时立刻收进程；
      * 需要启动时把耗时操作（Shizuku binder 往返）放到工作线程。
@@ -64,19 +72,6 @@ object ShellFxHost {
         }
     }
 
-    /** 一次点击：x/y 是屏幕物理像素 */
-    fun emit(x: Float, y: Float) {
-        val h = handle
-        if (h == null) {
-            log("tap 丢弃：绘制进程未运行")
-            return
-        }
-        if (!h.send("${ShellFxProto.CMD_TAP} $x $y")) {
-            log("tap 写入失败，等待下次重连")
-            handle = null
-        }
-    }
-
     private fun log(msg: String) = Trace.log(appContext, "host", msg)
 
     @Synchronized
@@ -93,6 +88,13 @@ object ShellFxHost {
             Trace.log(appContext ?: context, "host", "停止绘制进程（$reason）")
             runCatching { h.send(ShellFxProto.CMD_QUIT) }
             runCatching { h.destroy() }
+        } else if (context != null) {
+            // App 曾在后台独立运行时被杀过，这里没有 handle，只能按 pid 文件去杀
+            val app = context.applicationContext ?: context
+            Thread({ killStale(app) }, "MYclick-ShellFx-stop").apply {
+                isDaemon = true
+                start()
+            }
         }
     }
 
@@ -105,6 +107,7 @@ object ShellFxHost {
             synchronized(this) { starting = false }
             return
         }
+        killStale(context)
         Trace.log(context, "host", "启动绘制进程 classpath=$apk")
         val cmd = arrayOf(
             "/system/bin/app_process",
@@ -138,6 +141,26 @@ object ShellFxHost {
         if (cfg != null && cfg.enabled && cfg.shizukuMode) {
             pushConfig(h, cfg)
         }
+    }
+
+    /**
+     * 清掉上一次留下的绘制进程。
+     *
+     * 现在绘制进程在 App 退出后会独立运行（用户要的就是「退出 App 照样有特效」），
+     * 所以 App 被系统杀掉再重新打开时，旧进程可能还活着。不先杀掉就会出现两个
+     * 进程同时画、特效叠成两份。
+     */
+    private fun killStale(context: Context) {
+        val pidText = runCatching {
+            PrivilegedShell.exec(context, "/system/bin/cat", ShellPidFile.PATH)
+        }.getOrNull()?.trim()
+        val pid = pidText?.toIntOrNull() ?: return
+        if (pid <= 0 || pid == android.os.Process.myPid()) return
+        Trace.log(context, "host", "清理残留绘制进程 pid=$pid")
+        PrivilegedShell.exec(context, "/system/bin/kill", pid.toString())
+        Thread.sleep(250)
+        // 绘制进程被强杀时，它拉起的 getevent 会变成孤儿继续占着触摸屏，顺手清掉
+        runCatching { PrivilegedShell.exec(context, "/system/bin/pkill", "-f", "getevent -lt") }
     }
 
     private fun pushConfig(h: PrivilegedShell.Handle, cfg: Config) {

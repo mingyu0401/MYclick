@@ -29,6 +29,7 @@ import android.widget.TextView
 import com.myclick.R
 import com.myclick.access.ShellFxHost
 import com.myclick.core.Config
+import com.myclick.core.FxService
 import com.myclick.core.GlobalTouchReceiver
 import com.myclick.core.PackageDetector
 import com.myclick.core.Prefs
@@ -36,7 +37,6 @@ import com.myclick.core.RootHelper
 import com.myclick.core.ShizukuBridge
 import com.myclick.core.TouchRelay
 import com.myclick.fx.EffectSurfaceView
-import com.myclick.touch.EvdevTouchSource
 import rikka.shizuku.Shizuku
 import com.myclick.touch.PrivilegedShell
 
@@ -74,7 +74,7 @@ class SettingsActivity : Activity() {
     private val shizukuGrantListener =
         Shizuku.OnRequestPermissionResultListener { _, grantResult ->
             if (grantResult == PackageManager.PERMISSION_GRANTED) {
-                runCatching { EvdevTouchSource.start(this, config) }
+                runCatching { ShellFxHost.sync(this, config) }
                 toast("Shizuku 已授权")
             } else {
                 toast("Shizuku 未授权，Shizuku 模式无法工作")
@@ -91,9 +91,11 @@ class SettingsActivity : Activity() {
         if (!::config.isInitialized) return
         // 从 Shizuku 授权框 / 后台回来时后端可能刚刚就绪，补一次启动；
         // 进程被系统回收过也在这里恢复，不必让用户重新拨开关。
-        if (config.shizukuMode && config.enabled && !EvdevTouchSource.isRunning()) {
-            runCatching { EvdevTouchSource.start(this, config) }
+        if (config.shizukuMode && config.enabled && !ShellFxHost.isRunning()) {
+            runCatching { ShellFxHost.sync(this, config) }
         }
+        // 服务可能被系统回收过，回来时补一次
+        if (config.shizukuMode && config.enabled) runCatching { FxService.sync(this) }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -108,9 +110,9 @@ class SettingsActivity : Activity() {
         config = autoResolveTarget(config)
         Prefs.write(this, config)
         syncGlobalReceiver()
-        // 冷启动也要按配置恢复本进程宿主：否则只有「改一次配置」才会挂窗口，
-        // 用户重开 App 后会以为开关失效了。
+        // 冷启动也要按配置恢复宿主与前台服务：用户重开 App 后应当立刻可用。
         runCatching { ShellFxHost.sync(this, config) }
+        runCatching { FxService.sync(this) }
         runCatching { Shizuku.addRequestPermissionResultListener(shizukuGrantListener) }
 
         window.statusBarColor = Ui.BG
@@ -693,11 +695,11 @@ class SettingsActivity : Activity() {
         globalRows.forEach { Ui.syncSwitch(it, config.globalEffect) }
         syncGlobalReceiver()
         ensureOverlayPermission()
-        // 本进程宿主：无障碍 / Shizuku 两种模式共用，开关变化直接同步；
-        // 关闭时会立刻撤掉常驻窗口。
+        // 本进程宿主：开关变化直接同步；关闭时会立刻收掉绘制进程
         runCatching { ShellFxHost.sync(this, config) }
-        // Shizuku 事件源按开关启停
-        runCatching { EvdevTouchSource.onConfigChanged(this, config) }
+        // 前台服务保活：退出界面后特效仍要继续工作（否则 ColorOS 几秒回收进程）
+        runCatching { FxService.sync(this) }
+        if (config.enabled && config.shizukuMode) ensureNotifyPermission()
     }
 
     /**
@@ -790,12 +792,12 @@ class SettingsActivity : Activity() {
                 if (isFinishing || isDestroyed) return@runOnUiThread
                 when (backend) {
                     PrivilegedShell.Backend.SHIZUKU -> {
-                        EvdevTouchSource.start(this, config)
+                        ShellFxHost.sync(this, config)
                         toast("Shizuku 模式已启动：$desc")
                     }
                     PrivilegedShell.Backend.ROOT -> {
                         // 没有 Shizuku 但有 root：直接走 su
-                        EvdevTouchSource.start(this, config)
+                        ShellFxHost.sync(this, config)
                         toast("已通过 Root 启动触摸监听")
                     }
                     PrivilegedShell.Backend.NONE -> {
@@ -877,6 +879,17 @@ class SettingsActivity : Activity() {
     private fun openUrl(url: String) {
         runCatching {
             startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        }
+    }
+
+    /** Android 13+ 前台服务通知需要运行时权限；不给也能跑，只是看不到常驻通知 */
+    private fun ensureNotifyPermission() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) ==
+            PackageManager.PERMISSION_GRANTED
+        ) return
+        runCatching {
+            requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 4301)
         }
     }
 

@@ -82,7 +82,7 @@
 
 > **测试与日常使用统一使用 release 包**（复用 debug 签名，可直接覆盖安装）。
 > 当前版本 **v1.0.10**；v1.0.0 / v1.0.1 / v1.0.2 保留为历史 Release。
-> SHA-256：`e9f5531c57bb97f7d36d6fa5514fb4eddf51b57c6976dcd2a938f64c4450d8cc`
+> SHA-256：`cd35c140d5a3183d50607ecbbb50293e3e7c0933195982424e2381ca5b107538`
 
 ---
 
@@ -231,8 +231,12 @@ export ANDROID_HOME=/path/to/Android/Sdk     # Windows 可写 local.properties
 
 绘制端是一个以 `shell` 身份运行的 `app_process` 子进程：里面用 `SurfaceControl` 直接向
 SurfaceFlinger 要一个 root 图层来画，**绕开窗口系统** —— 所以 ColorOS 不会再弹
-「正在当前页面悬浮显示」。坐标与配置由 App 进程通过 stdin 的行协议推进去，录制状态由
-子进程自己枚举 `DisplayManager` 判断，App 被系统回收时子进程随 stdin EOF 退出并收掉图层。
+「正在当前页面悬浮显示」。触摸事件、录制状态判定、绘制都在这个子进程里，App 只负责
+启动它并下发配置。
+
+**退出设置页后特效继续工作**：模块会起一个前台服务（低优先级常驻通知）保活 ——
+ColorOS 对普通后台进程几秒就回收，没有前台服务的话「开好特效 → 退出 App → 去录屏」
+会直接失效。在系统设置里「强行停止」应用会彻底结束它，下次打开 App 自动恢复。
 
 > 注意：设备重启后 Shizuku 服务需要重新激活（这是 Shizuku 自身机制）；若设备已 root，
 > 模块会直接走 `su`，不需要 Shizuku。
@@ -262,6 +266,7 @@ SurfaceFlinger 要一个 root 图层来画，**绕开窗口系统** —— 所�
 | v1.0.7 移除无障碍模式 | 无障碍方案有三个改不掉的缺陷：ColorOS 持续提示「正在读取屏幕内容」、特效只能画在控件中心导致位置偏移、大量界面（Compose / Flutter / WebView / 游戏）不上报 `TYPE_VIEW_CLICKED` 而完全没有特效。上一版加回 Shizuku 模式后，无障碍模式已删干净：服务类、`accessibility_service_config.xml`、manifest 声明、`Config.overlayOnly` 全链路与设置页入口一并移除。同时 SCALE 默认值从 1.4 调为 1.0 |
 | v1.0.8 冷启动恢复窗口 | 冷启动后 `LocalFxHost.sync` 从未被调用（只有改配置时才走 `save()`），所以重开 App 会看到窗口不在、事件源空转。改为 `onCreate` 里按配置同步一次，实测冷启动后 `MYclick-FX` 立即存在，`tap raw=(5000,10000) → (312.5,625.0)` 与理论值一致。同时验证了 ColorOS「正在当前页面悬浮显示」提示：改用 `TYPE_TOAST` 挂全屏窗口会被系统拒绝（dumpsys 里不出现窗口），只能继续用 `TYPE_APPLICATION_OVERLAY`；该提示是一次性安全提醒，点过「取消」后反复切换应用均未复现 |
 | v1.0.6 Shizuku 模式 | 新增以 shell 身份读触摸屏的通道。真机实测：`shell` 属 `input` 组，`getevent` 可读 `/dev/input/event7`（`touchpanel`，量程 20351×44351，正好是屏幕 1272×2772 的 16 倍）。`sendevent` 模拟真实触摸验证映射：竖屏 `raw(6000,12000) → (375,750)`、横屏 `raw(6000,12000) → (750,897)`，均与理论值一致；录屏抽帧确认特效出现在手指位置。过程中修掉三个坑：`Shizuku.newProcess()` 在 13.x 已私有（改用 `IShizukuService.newProcess`）、`ShizukuProvider` 必须由 App 自己声明（否则 `pingBinder()` 恒 false）、提权探测必须离开主线程（未授权的 `su` 会阻塞到 ANR）。关闭无障碍后该模式独立工作 |
+| v1.0.10 退出 App 后仍工作 | 绘制进程独立读触摸屏（`getevent`）、自己判定录制、自己画，App 只负责下发配置；再配一个前台服务保活 App 进程（Shizuku 的 `newProcess` 子进程会随调用方死亡被回收，实测 App 被杀 4 秒后绘制进程一起消失）。真机验证：按 Home 退出界面 30 秒后 App 进程、绘制进程、`getevent`、前台服务全部存活；此时开 ColorOS 录屏 → 日志 `FX rec on` → 模拟点击 → `FX tap ... active=true` → `FX idle after 29 frames`（App 全程在后台）。重开 App 时按 `/data/local/tmp/myclick-fx.pid` 清掉残留实例，不会出现两份特效 |
 | v1.0.10 彻底去掉悬浮窗提示 | ColorOS 对 `TYPE_APPLICATION_OVERLAY` 每次显示都会弹「正在当前页面悬浮显示」，`TYPE_TOAST` 又被系统拒绝，改用 `app_process` 挂窗口则被 WMS 以 `Unknown pid / uid` 挡住（进程没在 AMS 注册，`openSession()` 直接失败）。最终方案：Shizuku 起一个 `shell` 身份的 `app_process` 子进程，进程内用 `SurfaceControl` 建 root 图层直接画 —— 没有窗口、没有 AppOps 操作，真机实测点击特效正常显示、能录进录屏、屏幕上再无任何提示条。踩到的坑：`Choreographer` 在该进程里永远不回调（改 Handler 固定节拍）、ColorOS 的 `ApplicationSharedMemory` 未初始化、`cmd display get-displays` 在受限 SELinux 域下拿不到输出（改用 `DisplayManager` 枚举私有虚屏，仍按 `RecordingScreen` 名字排除 `com.oplus.cast`） |
 | v1.0.9 关闭全局后不再全程出特效 | Shizuku 模式的宿主跑在模块进程里，拿不到录屏进程那套 `RecordingState`，于是之前只按总开关放行 —— 关掉「全局生效」仍然满屏出特效。新增 `RecorderWatcher`：用一个常驻 shell 进程在设备侧轮询 `cmd display get-displays`，按输出里的 `owner <录屏包名>` 判断是否在录屏（每次约 40ms，只在状态翻转时回一行）。**不能按 `dumpsys media_projection` 判断** —— ColorOS 录屏根本不登记那一路会话，而 `com.oplus.cast` 的投屏会长期占着一路，按它判断会一直当作「在录」。实测：待机 `MYclick-FX` 窗口数为 0、点击 `attached=false` 不出粒子；开录 1 秒内翻成 `录制开始，特效放行`、窗口挂上、抽帧可见特效；停录立刻 `录制结束`、窗口归零；「全局生效」打开时不依赖录制状态，待机也常驻绘制 |
 
