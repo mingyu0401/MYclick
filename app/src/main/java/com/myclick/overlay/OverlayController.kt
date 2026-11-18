@@ -64,6 +64,21 @@ class OverlayController(
     /** 已经应用到宿主上的配置；相同配置不再重复刷新渲染参数 */
     private var appliedConfig: Config? = null
 
+    /**
+     * 「纯悬浮窗模式」宿主自己的配置快照。
+     *
+     * ConfigStore 只服务于被 Hook 的进程（system_server / 录屏进程），
+     * 模块 App 进程里没人调 refresh()，`ConfigStore.value` 永远是默认值，
+     * 其中 `overlayOnly = false` —— 之前无障碍宿主因此永远不挂窗口、也不绘制。
+     * 这里由设置页 / 无障碍服务直接喂进来的配置为准。
+     */
+    @Volatile
+    private var overlayOnlyCfg: Config? = null
+
+    /** 当前生效的配置源：无障碍宿主读自己的快照，其余宿主仍读 ConfigStore */
+    private fun activeCfg(): Config =
+        if (overlayOnlyHost) (overlayOnlyCfg ?: ConfigStore.value) else ConfigStore.value
+
     private val displayListener = object : DisplayManager.DisplayListener {
         override fun onDisplayAdded(displayId: Int) {
             // 绝不因为「新显示器出现」就建窗口：录屏一开始会新建一个
@@ -144,7 +159,7 @@ class OverlayController(
      */
     fun reconcile() {
         mainHandler.post {
-            val cfg = ConfigStore.value
+            val cfg = activeCfg()
             val global = cfg.globalEffect || cfg.gateMode == Config.GATE_ALWAYS
             // system_server 里的全局宿主只在「全局生效」打开时才挂窗口，
             // 关闭时立刻撤掉，避免系统进程常驻一个全屏透明窗口。
@@ -167,6 +182,9 @@ class OverlayController(
     fun isAttached(): Boolean = attached
 
     fun updateConfig(cfg: Config) {
+        // 同步落地：无障碍回调里先 updateConfig 再 onTouch，
+        // 只有在这里同步赋值，紧随其后的 onTouch 同步段才读得到正确配置。
+        if (overlayOnlyHost) overlayOnlyCfg = cfg
         mainHandler.post {
             // 配置没变就不要重复 applyConfig：它会重算渲染参数并往主线程再 post
             // 一次 applyFixedSize。归属标记翻转时 updateConfig 的调用会比较频繁，
@@ -184,12 +202,12 @@ class OverlayController(
 
     /** 触摸入口：xPx/yPx 是 display 像素坐标（MotionEvent.rawX/rawY）。 */
     fun onTouch(event: TouchEvent) {
-        val cfg = ConfigStore.value
+        val cfg = activeCfg()
         com.myclick.core.Diag.log(
             "overlay",
             "onTouch x=${event.xPx} y=${event.yPx} enabled=${cfg.enabled} " +
-                "globalHost=$globalHost gate=${cfg.gateMode} " +
-                "active=${RecordingState.isActive()} attached=$attached"
+                "overlayOnly=${cfg.overlayOnly} host=$globalHost/$overlayOnlyHost " +
+                "gate=${cfg.gateMode} active=${RecordingState.isActive()} attached=$attached"
         )
         // 全局宿主只认总开关 + 全局模式；
         // 录屏进程内的宿主用三重门控：总开关、事件级归属标记、是否真的在录屏。

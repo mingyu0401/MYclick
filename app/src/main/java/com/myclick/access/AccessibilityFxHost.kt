@@ -4,6 +4,7 @@ import android.content.Context
 import android.view.Display
 import com.myclick.core.Config
 import com.myclick.core.TouchEvent
+import com.myclick.core.Trace
 import com.myclick.overlay.OverlayController
 
 /**
@@ -23,25 +24,30 @@ object AccessibilityFxHost {
     @Volatile
     private var controller: OverlayController? = null
 
-    /** 只在开关打开时挂窗口；关闭时立刻撤掉，避免常驻一个全屏图层 */
-    @Synchronized
-    fun sync(context: Context, cfg: Config) {
+    private fun ensure(context: Context): OverlayController {
         val app = context.applicationContext ?: context
         val ctrl = controller ?: OverlayController(app, overlayOnlyHost = true).also {
             controller = it
         }
+        return ctrl
+    }
+
+    /** 只在开关打开时挂窗口；关闭时立刻撤掉，避免常驻一个全屏图层 */
+    @Synchronized
+    fun sync(context: Context, cfg: Config) {
+        val ctrl = ensure(context)
+        Trace.log(
+            context, "host",
+            "sync enabled=${cfg.enabled} overlayOnly=${cfg.overlayOnly}"
+        )
         ctrl.updateConfig(cfg)
     }
 
     @Synchronized
     fun emit(context: Context, cfg: Config, x: Float, y: Float, eventTime: Long) {
-        val app = context.applicationContext ?: context
-        val ctrl = controller ?: OverlayController(app, overlayOnlyHost = true).also {
-            controller = it
-        }
-        // updateConfig 内部对相同配置去重，只做一次 reconcile；窗口还没挂上时
-        // 会在同一 Handler 队列里先 attach 再绘制。
+        val ctrl = ensure(context)
         ctrl.updateConfig(cfg)
         ctrl.onTouch(TouchEvent(x, y, Display.DEFAULT_DISPLAY, eventTime))
+        Trace.log(context, "host", "emit x=$x y=$y attached=${ctrl.isAttached()}")
     }
 }
