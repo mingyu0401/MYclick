@@ -108,6 +108,9 @@ class SettingsActivity : Activity() {
         config = autoResolveTarget(config)
         Prefs.write(this, config)
         syncGlobalReceiver()
+        // 冷启动也要按配置恢复本进程宿主：否则只有「改一次配置」才会挂窗口，
+        // 用户重开 App 后会以为开关失效了。
+        runCatching { LocalFxHost.sync(this, config) }
         runCatching { Shizuku.addRequestPermissionResultListener(shizukuGrantListener) }
 
         window.statusBarColor = Ui.BG
@@ -878,8 +881,8 @@ class SettingsActivity : Activity() {
     }
 
     private fun versionName(): String = runCatching {
-        packageManager.getPackageInfo(packageName, 0).versionName ?: "1.0.7"
-    }.getOrDefault("1.0.7")
+        packageManager.getPackageInfo(packageName, 0).versionName ?: "1.0.8"
+    }.getOrDefault("1.0.8")
 
     private fun toast(text: String) {
         android.widget.Toast.makeText(this, text, android.widget.Toast.LENGTH_SHORT).show()

@@ -306,6 +306,8 @@ class OverlayController(
         val lp = WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.MATCH_PARENT,
+            // 只能用 TYPE_APPLICATION_OVERLAY：实测 TYPE_TOAST 对这种全屏透明窗口
+            // 会被系统拒绝添加（dumpsys 里根本不出现窗口），无法作为替代。
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
