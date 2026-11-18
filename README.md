@@ -4,7 +4,7 @@
 
 **把 ColorOS / 一加「屏幕录制」里那个朴素的白色圆点，<br/>换成会扩散、会旋转、会迸出火花的点击特效**
 
-[![Release](https://img.shields.io/badge/Release-v1.0.11-F9A86C?style=flat-square)](https://github.com/mingyu0401/MYclick/releases)
+[![Release](https://img.shields.io/badge/Release-v1.0.12-F9A86C?style=flat-square)](https://github.com/mingyu0401/MYclick/releases)
 [![Platform](https://img.shields.io/badge/Platform-Android%2012%2B-3DDC84?style=flat-square)](#-兼容性)
 [![Framework](https://img.shields.io/badge/Framework-LSPosed-647589?style=flat-square)](#-快速开始)
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.2.0-7F52FF?style=flat-square)](#-从源码构建)
@@ -77,12 +77,12 @@
 
 | 渠道 | 文件 |
 | --- | --- |
-| **GitHub Releases**（推荐） | [MYclick-1.0.11-release.apk](https://github.com/mingyu0401/MYclick/releases/latest) |
-| 仓库内直链 | [download/MYclick-1.0.11-release.apk](https://github.com/mingyu0401/MYclick/raw/main/download/MYclick-1.0.11-release.apk) |
+| **GitHub Releases**（推荐） | [MYclick-1.0.12-release.apk](https://github.com/mingyu0401/MYclick/releases/latest) |
+| 仓库内直链 | [download/MYclick-1.0.12-release.apk](https://github.com/mingyu0401/MYclick/raw/main/download/MYclick-1.0.12-release.apk) |
 
 > **测试与日常使用统一使用 release 包**（复用 debug 签名，可直接覆盖安装）。
-> 当前版本 **v1.0.11**；v1.0.0 / v1.0.1 / v1.0.2 保留为历史 Release。
-> SHA-256：`628f9ba180385f0bad2314be20242018e55e62bc57a977c458942c31358bb0a2`
+> 当前版本 **v1.0.12**；v1.0.0 / v1.0.1 / v1.0.2 保留为历史 Release。
+> SHA-256：`83c078b9902ae1ab32a9a74b73ce60426e7b74346f091e57f5d311e1b5c18766`
 
 ---
 
@@ -92,7 +92,7 @@
 <summary><b>① 安装</b></summary>
 
 ```bash
-adb install -r download/MYclick-1.0.11-release.apk
+adb install -r download/MYclick-1.0.12-release.apk
 adb shell pm list packages -s | grep -i screenrecord   # 确认录屏包名
 ```
 
@@ -157,7 +157,7 @@ ColorOS 会过滤普通 App 的 `android.util.Log`，**优先看 LSPosed 管理�
 | :---: | :---: | :---: |
 | <img src="docs/images/ui-home.jpg" width="210" alt="设置页首页"/> | <img src="docs/images/ui-fx.jpg" width="210" alt="设置页特效"/> | <img src="docs/images/ui-about.jpg" width="210" alt="设置页关于"/> |
 
-*真机截图 · 一加 PLK110 / Android 17 / ColorOS 17 · v1.0.11 release 包*
+*真机截图 · 一加 PLK110 / Android 17 / ColorOS 17 · v1.0.12 release 包*
 
 底部导航带滑动高亮胶囊：切页时旧页淡出横移、新页淡入，图标弹性缩放、文字颜色渐变；
 主卡右侧图标与 App 启动图标共用同一个矢量资源，圆形裁切后自然融入卡片。
@@ -274,6 +274,7 @@ ColorOS 对普通后台进程几秒就回收，没有前台服务的话「开好
 | v1.0.7 移除无障碍模式 | 无障碍方案有三个改不掉的缺陷：ColorOS 持续提示「正在读取屏幕内容」、特效只能画在控件中心导致位置偏移、大量界面（Compose / Flutter / WebView / 游戏）不上报 `TYPE_VIEW_CLICKED` 而完全没有特效。上一版加回 Shizuku 模式后，无障碍模式已删干净：服务类、`accessibility_service_config.xml`、manifest 声明、`Config.overlayOnly` 全链路与设置页入口一并移除。同时 SCALE 默认值从 1.4 调为 1.0 |
 | v1.0.8 冷启动恢复窗口 | 冷启动后 `LocalFxHost.sync` 从未被调用（只有改配置时才走 `save()`），所以重开 App 会看到窗口不在、事件源空转。改为 `onCreate` 里按配置同步一次，实测冷启动后 `MYclick-FX` 立即存在，`tap raw=(5000,10000) → (312.5,625.0)` 与理论值一致。同时验证了 ColorOS「正在当前页面悬浮显示」提示：改用 `TYPE_TOAST` 挂全屏窗口会被系统拒绝（dumpsys 里不出现窗口），只能继续用 `TYPE_APPLICATION_OVERLAY`；该提示是一次性安全提醒，点过「取消」后反复切换应用均未复现 |
 | v1.0.6 Shizuku 模式 | 新增以 shell 身份读触摸屏的通道。真机实测：`shell` 属 `input` 组，`getevent` 可读 `/dev/input/event7`（`touchpanel`，量程 20351×44351，正好是屏幕 1272×2772 的 16 倍）。`sendevent` 模拟真实触摸验证映射：竖屏 `raw(6000,12000) → (375,750)`、横屏 `raw(6000,12000) → (750,897)`，均与理论值一致；录屏抽帧确认特效出现在手指位置。过程中修掉三个坑：`Shizuku.newProcess()` 在 13.x 已私有（改用 `IShizukuService.newProcess`）、`ShizukuProvider` 必须由 App 自己声明（否则 `pingBinder()` 恒 false）、提权探测必须离开主线程（未授权的 `su` 会阻塞到 ANR）。关闭无障碍后该模式独立工作 |
+| v1.0.12 动画帧率 | 原先用 `Handler.postDelayed(16ms)` 排帧 —— 是「画完再等 16ms」，每帧的绘制与调度耗时都叠进间隔，跑起来只有 45~58fps 且越到后段越抖；更坑的是**继承了面板刷新率**（PLK110 报 120Hz）按 8.33ms 排帧，而 shell 身份的 root 图层拿不到 120fps（`setFrameRate(..., CHANGE_FRAME_RATE_ALWAYS)` 调用成功但 SurfaceFlinger 的 renderRate 仍停在 55~60），结果每帧 `lockCanvas` 都要白等两个 vsync，实测 **9.9ms/帧**。改为 `postAtTime` 固定节拍、直接从 60fps 起步（`framePeriodMs = max(面板周期, 16.67ms)`），并对实测帧率做单向校准（跑不动就往下调）。效果：**61fps、单帧 1.2~1.4ms**，稳定不抖 |
 | v1.0.11 点击后卡顿 | 用户对照确认：关掉「启用特效」后滑动就不卡，问题在绘制。原先整屏 `SurfaceControl` 图层每帧 CLEAR + 上传 13MB（1272×2772×4B）并整块合成，录屏虚拟屏再合一次。改为按点击点开局部小图层：630×630（90dp 半径 × density 3.5），`setPosition` 精确落位，单帧绘制 2.4ms → 1.3~1.5ms，合成面积 3.53M → 0.40M 像素（降到 11%）。真机抽帧核实特效中心 (617,1646) 与点击点 (631,1643) 一致、弧线未被 buffer 边界裁切；连点 5 块槽位轮转，超过则复用最老的槽。踩坑：`setScale` 缩放锚点不是左上角会整体偏移（已弃用）；`sendevent` 注入缺 `ABS_MT_PRESSURE` 时驱动不上报坐标，会让「点击没反应」的假象出现 |
 | v1.0.10 图层只挂主屏 | 之前 `setLayerStack` 是 @hide，反射被 hidden API 拦掉、失败也没声张，结果图层挂在**所有 display** 上 —— 录屏时那块虚拟屏也要额外合成一次，是「点完之后滑动发涩」的可疑来源之一。现在用 `VMRuntime.setHiddenApiExemptions` 解除限制，`setLayerStack(DEFAULT_DISPLAY)` 真正生效。另外把单帧绘制耗时打进日志（真机 1272×2772 全屏 buffer ≈ 2.4ms/帧，29 帧合计约 70ms，不是卡顿主因）；试过用 `setScale` 把 buffer 缩到 1584×727（1.25ms/帧），但它的缩放锚点不是左上角、特效整体偏移，已回退 |
 | v1.0.10 退出 App 后仍工作 | 绘制进程独立读触摸屏（`getevent`）、自己判定录制、自己画，App 只负责下发配置；再配一个前台服务保活 App 进程（Shizuku 的 `newProcess` 子进程会随调用方死亡被回收，实测 App 被杀 4 秒后绘制进程一起消失）。真机验证：按 Home 退出界面 30 秒后 App 进程、绘制进程、`getevent`、前台服务全部存活；此时开 ColorOS 录屏 → 日志 `FX rec on` → 模拟点击 → `FX tap ... active=true` → `FX idle after 29 frames`（App 全程在后台）。重开 App 时按 `/data/local/tmp/myclick-fx.pid` 清掉残留实例，不会出现两份特效 |

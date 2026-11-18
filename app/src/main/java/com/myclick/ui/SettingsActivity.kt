@@ -894,8 +894,8 @@ class SettingsActivity : Activity() {
     }
 
     private fun versionName(): String = runCatching {
-        packageManager.getPackageInfo(packageName, 0).versionName ?: "1.0.11"
-    }.getOrDefault("1.0.11")
+        packageManager.getPackageInfo(packageName, 0).versionName ?: "1.0.12"
+    }.getOrDefault("1.0.12")
 
     private fun toast(text: String) {
         android.widget.Toast.makeText(this, text, android.widget.Toast.LENGTH_SHORT).show()

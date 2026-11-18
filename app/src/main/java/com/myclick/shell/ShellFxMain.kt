@@ -29,6 +29,10 @@ object ShellFxMain {
     @JvmStatic
     fun main(args: Array<String>) {
         Looper.prepareMainLooper()
+        // 渲染节拍跑在 main looper 上：提到 DISPLAY 优先级（-4），
+        // 否则会被同进程里读触摸 / 轮询录屏的普通线程抢占，表现为偶发掉帧。
+        // shell / root 身份才有 CAP_SYS_NICE，普通环境下设置失败也不影响功能。
+        runCatching { Process.setThreadPriority(Process.THREAD_PRIORITY_DISPLAY) }
         // 解 hidden API 限制（SurfaceControl 的 setLayerStack / setMatrix 都是 @hide）。
         // 放到独立线程：万一 VMRuntime 那边卡住，也不能拖住主流程起图层。
         Thread({ HiddenApi.unlock() }, "fx-hiddenapi").apply {

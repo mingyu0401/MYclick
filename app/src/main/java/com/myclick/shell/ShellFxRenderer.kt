@@ -8,6 +8,7 @@ import android.graphics.PorterDuff
 import android.hardware.display.DisplayManager
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.util.DisplayMetrics
 import android.view.Display
 import android.view.Surface
@@ -91,6 +92,31 @@ class ShellFxRenderer(context: Context) {
     private var speed = 1f
     private var frameCount = 0
 
+    /**
+     * 下一帧的触发时刻（`SystemClock.uptimeMillis()` 基准，用 Double 累加）。
+     *
+     * 不能再用 `postDelayed(16)`：那是「执行完再等 16ms」，每帧的绘制耗时都会叠进
+     * 间隔里，实际间隔变成 16 + 绘制 + 调度 ≈ 18~22ms，跑起来只有 45~55fps，
+     * 而且抖动越积越大（越到动画后段越明显）。
+     */
+    private var nextFrameAt = 0.0
+
+    /** 面板报告的理想节拍（1000/刷新率） */
+    private var basePeriodMs = 1000.0 / 60.0
+
+    /**
+     * 实际使用的节拍周期，从 [basePeriodMs] 起，按实测能力自动降级。
+     *
+     * 面板可能报 120Hz，但 shell 身份创建的 root 图层**不参与系统的帧率投票**
+     * （`setFrameRate(..., CHANGE_FRAME_RATE_ALWAYS)` 调用成功但 SurfaceFlinger
+     * 仍然把 renderRate 停在 55~60Hz）。这时如果还按 8.33ms 排帧，每两帧就有一帧
+     * 被合成器丢掉，加上 `lockCanvas` 要等两个 vsync，画面反而更抖。
+     */
+    private var framePeriodMs = 1000.0 / 60.0
+
+    /** 本轮动画的起始时刻，用来算真实 fps */
+    private var loopStartNanos = 0L
+
     /** 单帧绘制耗时累计（微秒），空闲时打印，用来判断卡顿是否来自这里 */
     private var frameCostUs = 0L
 
@@ -165,6 +191,7 @@ class ShellFxRenderer(context: Context) {
 
     fun release() {
         running = false
+        handler.removeCallbacks(frameRunnable)
         for (s in slots) {
             s.engine.clear()
             releaseSlot(s)
@@ -189,8 +216,22 @@ class ShellFxRenderer(context: Context) {
         screenW = w
         screenH = h
         density = metrics.density
-        println("FX layout ${w}x$h d=$density")
+        basePeriodMs = 1000.0 / displayRefreshRate()
+        // 直接从 60fps 起步，不用面板报的刷新率：root 图层这条通道实测拿不到 120fps，
+        // 按 8.33ms 排帧只会让每一帧都多等一个 vsync（实测 9.9ms/帧），
+        // 等于白白把 CPU 占住、还给滑动添堵。真跑不动的设备再由 calibratePeriod 往下调。
+        framePeriodMs = maxOf(basePeriodMs, 1000.0 / 60.0)
+        println("FX layout ${w}x$h d=$density panel=${"%.0f".format(1000.0 / basePeriodMs)}Hz")
         return true
+    }
+
+    /** 面板刷新率，钳到 [50, 120]；动画节拍跟它对齐，避免每帧落在两次 vsync 之间 */
+    private fun displayRefreshRate(): Double {
+        val d = runCatching { displayManager?.getDisplay(Display.DEFAULT_DISPLAY) }.getOrNull()
+            ?: return 60.0
+        @Suppress("DEPRECATION")
+        val hz = runCatching { d.refreshRate }.getOrDefault(60f)
+        return hz.toDouble().coerceIn(50.0, 120.0)
     }
 
     private fun currentMetrics(): DisplayMetrics? {
@@ -263,7 +304,49 @@ class ShellFxRenderer(context: Context) {
                     .getMethod("setLayerStack", SurfaceControl::class.java, Int::class.javaPrimitiveType)
                     .invoke(tx, c, Display.DEFAULT_DISPLAY)
             }
+            // 告诉 SurfaceFlinger「这个图层要按面板刷新率走」。
+            // 不设的话它把 root 图层当静态内容，只在有别的动画时才提频，本图层
+            // 每帧 unlockCanvasAndPost 都要等一次 buffer 归还（实测 8ms），
+            // 结果只能跑出 60fps。设成 FIXED_SOURCE 后合成器会按固定帧率安排。
+            val rateHz = (1000.0 / framePeriodMs).toFloat()
+            // 四参版本带「换帧率策略」：ALWAYS 才会让合成器真的为这个图层跑面板刷新率。
+            // 只给三参（ONLY_IF_SEAMLESS）时，静态内容下 display 仍停在 60Hz，
+            // 每帧 lockCanvas 要等两个 vsync，实测只能拿到 62fps。
+            runCatching {
+                SurfaceControl.Transaction::class.java
+                    .getMethod(
+                        "setFrameRate",
+                        SurfaceControl::class.java,
+                        Float::class.javaPrimitiveType,
+                        Int::class.javaPrimitiveType,
+                        Int::class.javaPrimitiveType
+                    )
+                    .invoke(
+                        tx, c, rateHz,
+                        FRAME_RATE_COMPATIBILITY_FIXED_SOURCE,
+                        CHANGE_FRAME_RATE_ALWAYS
+                    )
+            }.onFailure { e1 ->
+                println("FX setFrameRate(4arg) fail: $e1")
+                runCatching {
+                    SurfaceControl.Transaction::class.java
+                        .getMethod(
+                            "setFrameRate",
+                            SurfaceControl::class.java,
+                            Float::class.javaPrimitiveType,
+                            Int::class.javaPrimitiveType
+                        )
+                        .invoke(tx, c, rateHz, FRAME_RATE_COMPATIBILITY_FIXED_SOURCE)
+                }.onFailure { println("FX setFrameRate(3arg) fail: $it") }
+            }
             tx.apply()
+            runCatching {
+                s.setFrameRate(
+                    rateHz,
+                    Surface.FRAME_RATE_COMPATIBILITY_FIXED_SOURCE,
+                    Surface.CHANGE_FRAME_RATE_ALWAYS
+                )
+            }.onFailure { println("FX Surface.setFrameRate fail: $it") }
             slot.control = c
             slot.surface = s
             slot.size = size
@@ -317,7 +400,9 @@ class ShellFxRenderer(context: Context) {
         if (running) return
         running = true
         lastFrameNanos = 0L
-        handler.post(frameRunnable)
+        loopStartNanos = System.nanoTime()
+        nextFrameAt = SystemClock.uptimeMillis().toDouble()
+        handler.postAtTime(frameRunnable, FRAME_TOKEN, nextFrameAt.toLong())
     }
 
     private fun tick() {
@@ -348,11 +433,46 @@ class ShellFxRenderer(context: Context) {
         if (!any) {
             running = false
             val avg = if (frameCount > 0) frameCostUs / frameCount else 0
-            println("FX idle after $frameCount frames, draw avg=${avg}us")
+            val elapsedMs = (System.nanoTime() - loopStartNanos) / 1_000_000f
+            val fps = if (elapsedMs > 0f) frameCount * 1000f / elapsedMs else 0f
+            println(
+                "FX idle after $frameCount frames in ${elapsedMs.toInt()}ms " +
+                    "(${fps.toInt()}fps target=${"%.0f".format(1000.0 / framePeriodMs)}), " +
+                    "draw avg=${avg}us"
+            )
+            calibratePeriod(frameCount, elapsedMs)
             frameCostUs = 0
             return
         }
-        handler.postDelayed(frameRunnable, FRAME_MS.toLong())
+        // 固定节拍：按起始时刻累加，绘制耗时不再叠加进间隔（这是掉到 45fps 的根因）。
+        // 落后太多（系统抖动 / 被抢占）就把基准重置到这里，避免连续补帧把主线程打满。
+        nextFrameAt += framePeriodMs
+        val nowMs = SystemClock.uptimeMillis().toDouble()
+        if (nextFrameAt < nowMs) nextFrameAt = nowMs + framePeriodMs
+        handler.postAtTime(frameRunnable, FRAME_TOKEN, nextFrameAt.toLong())
+    }
+
+    /**
+     * 按实测帧率校准节拍。
+     *
+     * 跑一轮就知道了：实际 fps 明显低于目标，说明这个通道拿不到那么高的合成率，
+     * 把节拍放到实测值附近（留 3% 余量），下一轮就与 vsync 对齐、不再丢帧。
+     * 只会往「更慢」方向调整，避免在边界上来回震荡。
+     */
+    private fun calibratePeriod(frames: Int, elapsedMs: Float) {
+        if (frames < 8 || elapsedMs <= 0f) return
+        val actualFps = frames * 1000.0 / elapsedMs
+        val targetFps = 1000.0 / framePeriodMs
+        if (actualFps >= targetFps * 0.9) return
+        // 留 1.5% 余量：周期比实测略长一点点，才不会每隔几帧就错过一次 vsync
+        val next = (1000.0 / actualFps * 1.015).coerceAtLeast(basePeriodMs)
+        if (next > framePeriodMs + 0.2) {
+            framePeriodMs = next
+            println(
+                "FX 节拍校准：目标 ${"%.0f".format(targetFps)}fps 拿不到（实测 ${"%.0f".format(actualFps)}fps），" +
+                    "改用 ${"%.1f".format(next)}ms/帧"
+            )
+        }
     }
 
     private fun renderSlot(slot: Slot) {
@@ -423,7 +543,19 @@ class ShellFxRenderer(context: Context) {
          */
         const val SLOT_COUNT = 5
 
+        /** 动画时间基准：引擎内部以 60fps 一帧为单位，与实际节拍解耦 */
         const val FRAME_MS = 1000f / 60f
-        const val MAX_DT_MS = 50f
+
+        /** 单帧最大推进量：超过这么多的时间视为卡顿，钳住以免动画「跳一大段」 */
+        const val MAX_DT_MS = 33f
+
+        /** postAtTime 的 token，用于 removeCallbacks */
+        val FRAME_TOKEN = Any()
+
+        /** Surface.FRAME_RATE_COMPATIBILITY_FIXED_SOURCE */
+        const val FRAME_RATE_COMPATIBILITY_FIXED_SOURCE = 1
+
+        /** Surface.CHANGE_FRAME_RATE_ALWAYS：强制要求按目标帧率合成 */
+        const val CHANGE_FRAME_RATE_ALWAYS = 1
     }
 }
