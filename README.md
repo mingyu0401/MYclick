@@ -81,7 +81,7 @@
 | 仓库内直链 | [download/MYclick-1.0.8-release.apk](https://github.com/mingyu0401/MYclick/raw/main/download/MYclick-1.0.8-release.apk) |
 
 > **测试与日常使用统一使用 release 包**（复用 debug 签名，可直接覆盖安装）。
-> 当前版本 **v1.0.8**；v1.0.0 ~ v1.0.7 保留为历史版本，`latest` 已指向 v1.0.8。
+> 当前版本 **v1.0.8**，`latest` 已指向它；v1.0.0 / v1.0.1 / v1.0.2 保留为历史 Release。
 > SHA-256：`7f4c9b29bcfa2a6742afe1a0df15eecd4ad63b68af0a9d6162b6f31792f1f0f2`
 
 ---
