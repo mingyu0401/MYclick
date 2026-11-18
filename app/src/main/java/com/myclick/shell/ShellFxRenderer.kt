@@ -3,6 +3,7 @@ package com.myclick.shell
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Matrix
 import android.graphics.PixelFormat
 import android.graphics.PorterDuff
 import android.hardware.display.DisplayManager
@@ -15,7 +16,9 @@ import android.view.SurfaceControl
 import android.view.WindowManager
 import com.myclick.core.Config
 import com.myclick.fx.EffectEngine
+import kotlin.math.abs
 import kotlin.math.min
+import kotlin.math.roundToInt
 
 /**
  * shell 进程里的覆盖层渲染器。
@@ -44,7 +47,21 @@ class ShellFxRenderer(context: Context) {
 
     private var bufW = 0
     private var bufH = 0
+    private var screenW = 0
+    private var screenH = 0
     private var density = 1f
+
+    /** buffer 相对 dp 的倍率（= min(density, 2)，可关闭上限） */
+    private var dpr = 1f
+
+    /**
+     * 是否允许「小 buffer + setScale 放大」。
+     *
+     * 实测 `SurfaceControl.setScale` 的缩放锚点不是左上角（把 buffer 缩到 1584×727
+     * 再放大 1.75 倍后，点击点画的圆整体偏到别处），会直接导致特效错位，
+     * 所以默认关闭、只用 1:1 的全屏 buffer。要重新启用请先解决锚点补偿。
+     */
+    private var matrixSupported = false
 
     private var config: Config = Config.default()
     private var uiMode = 0
@@ -59,6 +76,9 @@ class ShellFxRenderer(context: Context) {
     private var lastFrameNanos = 0L
     private var speed = 1f
     private var frameCount = 0
+
+    /** 单帧绘制耗时累计（微秒），空闲时打印，用来判断卡顿是否来自这里 */
+    private var frameCostUs = 0L
 
     /**
      * 渲染节拍用 Handler 而不是 Choreographer。
@@ -128,9 +148,11 @@ class ShellFxRenderer(context: Context) {
         val h = metrics.heightPixels
         val d = metrics.density
         if (w <= 0 || h <= 0) return false
-        density = d
-        if (surface != null && w == bufW && h == bufH) return true
-        rebuild(w, h)
+        val nd = if (config.dprCapEnabled) min(d, 2f) else d
+        // 不支持 setMatrix 时 buffer 只能按物理像素，别把 nd 当目标值反复重建
+        val target = if (matrixSupported) nd else d
+        if (surface != null && w == screenW && h == screenH && abs(target - dpr) < 0.01f) return true
+        rebuild(w, h, d, nd)
         return surface != null
     }
 
@@ -144,12 +166,23 @@ class ShellFxRenderer(context: Context) {
         return m
     }
 
-    private fun rebuild(w: Int, h: Int) {
+    /**
+     * 建图层。
+     *
+     * buffer 尺寸 = 屏幕 dp × dpr（默认上限 2x），而不是屏幕物理像素 ——
+     * 后者在 1272×2772 / 3.5dpi 的机器上一帧就是 13MB，每帧都要软件 CLEAR + 上传，
+     * 点击后那 0.4 秒会明显抢 CPU，录屏时更严重（表现成「点完点一下要卡一会儿才恢复」）。
+     * 用 dpr 后 buffer 小 3 倍多，再通过 setMatrix 放大回全屏。
+     */
+    private fun rebuild(w: Int, h: Int, d: Float, nd: Float) {
         releaseSurface()
+        val useScale = matrixSupported && nd < d - 0.01f
+        val bw = if (useScale) (w / d * nd).roundToInt().coerceAtLeast(1) else w
+        val bh = if (useScale) (h / d * nd).roundToInt().coerceAtLeast(1) else h
         try {
             val c = SurfaceControl.Builder()
                 .setName(LAYER_NAME)
-                .setBufferSize(w, h)
+                .setBufferSize(bw, bh)
                 .setFormat(PixelFormat.TRANSLUCENT)
                 .build()
             val s = Surface(c)
@@ -162,14 +195,46 @@ class ShellFxRenderer(context: Context) {
                     .getMethod("setLayerStack", SurfaceControl::class.java, Int::class.javaPrimitiveType)
                     .invoke(tx, c, Display.DEFAULT_DISPLAY)
             }
+            if (useScale) {
+                val k = d / nd
+                val err = runCatching {
+                    SurfaceControl.Transaction::class.java
+                        .getMethod(
+                            "setScale",
+                            SurfaceControl::class.java,
+                            Float::class.javaPrimitiveType,
+                            Float::class.javaPrimitiveType
+                        )
+                        .invoke(tx, c, k, k)
+                }.exceptionOrNull()
+                if (err != null) {
+                    // 某些版本没有这个方法：放弃缩放，退回全屏 buffer
+                    val names = runCatching {
+                        SurfaceControl.Transaction::class.java.methods
+                            .filter { it.name.contains("atrix") || it.name.contains("cale") }
+                            .joinToString { it.name + "(" + it.parameterTypes.joinToString { p -> p.simpleName } + ")" }
+                    }.getOrDefault("?")
+                    println("FX setScale 失败: $err；候选=$names")
+                    matrixSupported = false
+                    runCatching { tx.close() }
+                    runCatching { s.release() }
+                    runCatching { c.release() }
+                    rebuild(w, h, d, d)
+                    return
+                }
+            }
             tx.apply()
             surfaceControl = c
             surface = s
-            bufW = w
-            bufH = h
+            screenW = w
+            screenH = h
+            bufW = bw
+            bufH = bh
+            density = d
+            dpr = if (useScale) nd else d
             shown = false
             clearBuffer()
-            println("FX surface ${w}x${h} d=$density")
+            println("FX surface screen=${w}x$h buffer=${bw}x$bh dpr=$dpr")
         } catch (t: Throwable) {
             println("FX rebuild failed: $t")
             surfaceControl = null
@@ -228,13 +293,17 @@ class ShellFxRenderer(context: Context) {
         lastFrameNanos = now
         val clamped = dtMs.coerceIn(0f, MAX_DT_MS)
         engine.advance((clamped / FRAME_MS) * speed)
+        val t0 = System.nanoTime()
         renderFrame()
+        frameCostUs += (System.nanoTime() - t0) / 1000
         frameCount++
         if (!engine.hasActive) {
             running = false
             clearBuffer()
             hideLayer()
-            println("FX idle after $frameCount frames")
+            val avg = if (frameCount > 0) frameCostUs / frameCount else 0
+            println("FX idle after $frameCount frames, draw avg=${avg}us buffer=${bufW}x$bufH")
+            frameCostUs = 0
             return
         }
         handler.postDelayed(frameRunnable, FRAME_MS.toLong())
@@ -247,7 +316,7 @@ class ShellFxRenderer(context: Context) {
             canvas = s.lockCanvas(null) ?: return
             canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
             canvas.save()
-            canvas.scale(density, density)
+            canvas.scale(dpr, dpr)
             engine.draw(canvas)
             canvas.restore()
         } catch (t: Throwable) {

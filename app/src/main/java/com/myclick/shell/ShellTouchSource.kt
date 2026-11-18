@@ -13,17 +13,13 @@ import java.io.InputStreamReader
 /**
  * 绘制进程内的触摸事件源。
  *
- * 之前这条链路跑在 App 进程里（App 用 Shizuku 读 getevent，再把坐标通过 stdin 推给
- * 绘制进程），结果是**退出 App 几秒后全停** —— ColorOS 很快回收后台进程，读触摸的
- * 线程、Shizuku 管道一起没了，特效自然消失。
+ * 之前这条链路跑在 App 进程里（App 用 Shizuku 读事件再推给绘制进程），结果是
+ * **退出 App 几秒后全停** —— ColorOS 很快回收后台进程。现在绘制进程自己读：
+ * 它就是 `shell` 身份、属于 `input` 组，直接 fork `getevent` 即可，不用再经过 Shizuku。
  *
- * 现在改成绘制进程自己读：它本来就是 `shell` 身份，属于 `input` 组，直接 fork
- * `getevent -lt <触摸屏>` 即可，不需要再经过 Shizuku。App 只负责启动/停止/下发配置，
- * 即使被系统杀掉，特效照样工作。
- *
- * 解析规则与原来一致：`ABS_MT_POSITION_X/Y` 记坐标、`BTN_TOUCH DOWN` + `SYN_REPORT`
- * 判定一次按下（`ABS_MT_SLOT` 必须先选中 slot，否则内核会丢掉 position 事件），
+ * 解析规则：`ABS_MT_POSITION_X/Y` 记坐标、`BTN_TOUCH DOWN` + `SYN_REPORT` 判定一次按下，
  * 再按面板量程线性映射到屏幕像素并做旋转补偿。
+ * （试过直接 open `/dev/input/event*` 读二进制，真机上读不到数据，只能继续用 getevent。）
  */
 class ShellTouchSource(
     private val context: Context,
@@ -86,7 +82,7 @@ class ShellTouchSource(
             try {
                 readLoop(p, dev)
             } catch (t: Throwable) {
-                println("FX touch read fail: $t")
+                if (running) println("FX touch read fail: $t")
             } finally {
                 runCatching { p.destroy() }
                 process = null

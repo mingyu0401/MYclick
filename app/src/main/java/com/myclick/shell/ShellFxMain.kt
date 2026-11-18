@@ -29,6 +29,12 @@ object ShellFxMain {
     @JvmStatic
     fun main(args: Array<String>) {
         Looper.prepareMainLooper()
+        // 解 hidden API 限制（SurfaceControl 的 setLayerStack / setMatrix 都是 @hide）。
+        // 放到独立线程：万一 VMRuntime 那边卡住，也不能拖住主流程起图层。
+        Thread({ HiddenApi.unlock() }, "fx-hiddenapi").apply {
+            isDaemon = true
+            start()
+        }
         val handler = Handler(Looper.getMainLooper())
 
         val context = systemContext()
