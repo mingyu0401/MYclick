@@ -3,7 +3,6 @@ package com.myclick.shell
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
-import android.graphics.Matrix
 import android.graphics.PixelFormat
 import android.graphics.PorterDuff
 import android.hardware.display.DisplayManager
@@ -16,8 +15,6 @@ import android.view.SurfaceControl
 import android.view.WindowManager
 import com.myclick.core.Config
 import com.myclick.fx.EffectEngine
-import kotlin.math.abs
-import kotlin.math.min
 import kotlin.math.roundToInt
 
 /**
@@ -32,36 +29,55 @@ import kotlin.math.roundToInt
  * root 图层。shell 身份持有 `ACCESS_SURFACE_FLINGER`，建层、设 z、show 全部通过；
  * 因为没有窗口、没有 AppOps 操作，系统不会提示任何「悬浮窗」信息。
  *
- * 坐标系：buffer 用屏幕物理像素，canvas 按 density 缩放，于是绘制单位仍是 dp，
- * 和 App 内 [com.myclick.fx.EffectSurfaceView] 完全一致（连粒子尺寸都不用改）。
+ * **为什么要用一堆小图层而不是一张全屏图层**：一次点击的可见范围只有点击点周围
+ * 约 90dp（弧最远到 ~58dp，火花飞出去 ~60dp），但全屏 buffer 在 1272×2772 上
+ * 每帧要清 13MB、上传 13MB，SurfaceFlinger 还要整块合成一遍；录屏时那块虚拟屏
+ * 再合成一次，等于「点一下之后 0.4 秒里系统带宽被吃掉一大块」—— 表现就是
+ * **点完马上滑动会发涩**。改成每帧只提交 ~600×600（约 1.4MB）后合成面积降到
+ * 十分之一。
+ *
+ * **为什么用 setPosition 而不是缩小 buffer 再 setScale**：`setScale` 的缩放锚点
+ * 不是左上角（实测把 buffer 缩到 1584×727 再放大 1.75 倍后，圆整体偏到别处），
+ * 而 `setPosition` 是明确的左上角偏移，位置精确。
+ *
+ * 坐标系：每个 slot 的 buffer 是屏幕物理像素的一块矩形，canvas 按 density 缩放，
+ * 于是绘制单位仍是 dp，和 App 内 [com.myclick.fx.EffectSurfaceView] 完全一致。
  */
 class ShellFxRenderer(context: Context) {
 
-    private val engine = EffectEngine()
     private val handler = Handler(Looper.getMainLooper())
     private val displayManager = context.getSystemService(DisplayManager::class.java)
     private val windowManager = context.getSystemService(WindowManager::class.java)
 
-    private var surfaceControl: SurfaceControl? = null
-    private var surface: Surface? = null
+    /**
+     * 图层槽位。一次点击占一个槽，独立引擎、独立 buffer、独立位置。
+     *
+     * 做成「多槽」而不是「单图层跟着最新点击移动」：连点时前一次点击的粒子还在飞，
+     * 移动图层会让它们画到错误的位置。
+     */
+    private inner class Slot(val id: Int) {
+        val engine = EffectEngine()
+        var control: SurfaceControl? = null
+        var surface: Surface? = null
 
-    private var bufW = 0
-    private var bufH = 0
+        /** buffer 边长（物理像素，正方形） */
+        var size = 0
+        var originX = 0
+        var originY = 0
+        var shown = false
+
+        /** 这个槽当前是否有粒子在播 */
+        var active = false
+
+        /** 最近一次使用的时间戳，槽不够用时踢掉最老的 */
+        var lastUsed = 0L
+    }
+
+    private val slots = Array(SLOT_COUNT) { Slot(it) }
+
     private var screenW = 0
     private var screenH = 0
     private var density = 1f
-
-    /** buffer 相对 dp 的倍率（= min(density, 2)，可关闭上限） */
-    private var dpr = 1f
-
-    /**
-     * 是否允许「小 buffer + setScale 放大」。
-     *
-     * 实测 `SurfaceControl.setScale` 的缩放锚点不是左上角（把 buffer 缩到 1584×727
-     * 再放大 1.75 倍后，点击点画的圆整体偏到别处），会直接导致特效错位，
-     * 所以默认关闭、只用 1:1 的全屏 buffer。要重新启用请先解决锚点补偿。
-     */
-    private var matrixSupported = false
 
     private var config: Config = Config.default()
     private var uiMode = 0
@@ -71,8 +87,6 @@ class ShellFxRenderer(context: Context) {
     private var recording = false
 
     private var running = false
-    private var shown = false
-
     private var lastFrameNanos = 0L
     private var speed = 1f
     private var frameCount = 0
@@ -94,11 +108,11 @@ class ShellFxRenderer(context: Context) {
     fun applyConfig(cfg: Config, uMode: Int) {
         config = cfg
         uiMode = uMode
-        engine.update(cfg, uMode)
-        speed = engine.render.speed
+        speed = EffectEngine.RenderConfig.from(cfg, uMode).speed
+        for (s in slots) s.engine.update(cfg, uMode)
         if (!cfg.enabled) {
-            engine.clear()
-            hideSoon()
+            clearAll()
+            hideIdle()
         }
     }
 
@@ -106,8 +120,8 @@ class ShellFxRenderer(context: Context) {
         recording = on
         if (!on && !config.globalEffect && config.gateMode != Config.GATE_ALWAYS) {
             // 停录后立刻收尾，避免残留粒子在桌面上飘
-            engine.clear()
-            hideSoon()
+            clearAll()
+            hideIdle()
         }
     }
 
@@ -120,40 +134,63 @@ class ShellFxRenderer(context: Context) {
             println("FX tap dropped: idle")
             return
         }
-        if (!ensureSurface()) {
-            println("FX tap dropped: no surface")
+        if (!ensureLayout()) {
+            println("FX tap dropped: no metrics")
             return
         }
+        val radius = radiusPx()
+        val size = (radius * 2).coerceAtMost(maxOf(screenW, screenH))
+        val ox = (xPx - size / 2f).roundToInt().coerceIn(0, (screenW - size).coerceAtLeast(0))
+        val oy = (yPx - size / 2f).roundToInt().coerceIn(0, (screenH - size).coerceAtLeast(0))
+        val slot = pickSlot()
+        if (!ensureLayer(slot, size, ox, oy)) {
+            println("FX tap dropped: no layer")
+            return
+        }
+        slot.engine.update(config, uiMode)
         val d = density.coerceAtLeast(0.5f)
-        engine.spawn(xPx / d, yPx / d)
-        println("FX tap $xPx,$yPx -> ${xPx / d},${yPx / d} dpr=$d active=${engine.hasActive}")
+        slot.engine.spawn(xPx / d, yPx / d)
+        slot.active = true
+        slot.lastUsed = System.nanoTime()
+        println(
+            "FX tap ${xPx.roundToInt()},${yPx.roundToInt()} slot=${slot.id} " +
+                "layer=${size}x$size @$ox,$oy active=${slot.engine.hasActive}"
+        )
         if (!running) {
             frameCount = 0
+            frameCostUs = 0
             startLoop()
         }
     }
 
     fun release() {
         running = false
-        engine.clear()
-        releaseSurface()
+        for (s in slots) {
+            s.engine.clear()
+            releaseSlot(s)
+        }
     }
 
-    // ---------------- 图层生命周期 ----------------
+    // ---------------- 屏幕尺寸 ----------------
 
-    /** 确保图层存在且尺寸与当前屏幕一致；旋转 / 分辨率变化时会重建 */
-    private fun ensureSurface(): Boolean {
+    /** 屏幕尺寸 / 密度变了（旋转、分辨率切换）就整体重建 */
+    private fun ensureLayout(): Boolean {
         val metrics = currentMetrics() ?: return false
         val w = metrics.widthPixels
         val h = metrics.heightPixels
-        val d = metrics.density
         if (w <= 0 || h <= 0) return false
-        val nd = if (config.dprCapEnabled) min(d, 2f) else d
-        // 不支持 setMatrix 时 buffer 只能按物理像素，别把 nd 当目标值反复重建
-        val target = if (matrixSupported) nd else d
-        if (surface != null && w == screenW && h == screenH && abs(target - dpr) < 0.01f) return true
-        rebuild(w, h, d, nd)
-        return surface != null
+        if (w == screenW && h == screenH && density == metrics.density) return true
+        // 尺寸变化：旧图层的 buffer 与位置全部作废
+        running = false
+        for (s in slots) {
+            s.engine.clear()
+            releaseSlot(s)
+        }
+        screenW = w
+        screenH = h
+        density = metrics.density
+        println("FX layout ${w}x$h d=$density")
+        return true
     }
 
     private fun currentMetrics(): DisplayMetrics? {
@@ -167,114 +204,112 @@ class ShellFxRenderer(context: Context) {
     }
 
     /**
-     * 建图层。
+     * 一次点击需要的可见半径（物理像素）。
      *
-     * buffer 尺寸 = 屏幕 dp × dpr（默认上限 2x），而不是屏幕物理像素 ——
-     * 后者在 1272×2772 / 3.5dpi 的机器上一帧就是 13MB，每帧都要软件 CLEAR + 上传，
-     * 点击后那 0.4 秒会明显抢 CPU，录屏时更严重（表现成「点完点一下要卡一会儿才恢复」）。
-     * 用 dpr 后 buffer 小 3 倍多，再通过 setMatrix 放大回全屏。
+     * 引擎里可见部分的最远距离：弧半径最大约 `26*scale + 2*scale*16`（再往后描边宽度
+     * 趋零、看不见），火花 20 帧后 6.8*scale 的初速衰减到位移 ~60*scale。合计取
+     * [EFFECT_RADIUS_DP] dp 留余量 —— 裁掉的只是几乎透明的最外圈。
      */
-    private fun rebuild(w: Int, h: Int, d: Float, nd: Float) {
-        releaseSurface()
-        val useScale = matrixSupported && nd < d - 0.01f
-        val bw = if (useScale) (w / d * nd).roundToInt().coerceAtLeast(1) else w
-        val bh = if (useScale) (h / d * nd).roundToInt().coerceAtLeast(1) else h
+    private fun radiusPx(): Int {
+        val s = config.scale.coerceIn(0.2f, 6f)
+        val r = (EFFECT_RADIUS_DP * s * density).roundToInt()
+        val cap = maxOf(screenW, screenH) / 2
+        return r.coerceIn(64, cap.coerceAtLeast(64))
+    }
+
+    // ---------------- 图层生命周期 ----------------
+
+    /** 优先空闲槽；都在播就踢最老的（连点超过 [SLOT_COUNT] 次时） */
+    private fun pickSlot(): Slot {
+        val idle = slots.firstOrNull { !it.active }
+        if (idle != null) return idle
+        return slots.minBy { it.lastUsed }
+    }
+
+    private fun ensureLayer(slot: Slot, size: Int, ox: Int, oy: Int): Boolean {
+        if (slot.control == null || slot.size != size) {
+            releaseSlot(slot)
+            if (!buildLayer(slot, size)) return false
+        }
+        if (!slot.shown) {
+            runCatching { newTxn().setVisibility(slot.control!!, true).apply() }
+            slot.shown = true
+        }
+        if (slot.originX != ox || slot.originY != oy) {
+            runCatching { newTxn().setPosition(slot.control!!, ox.toFloat(), oy.toFloat()).apply() }
+            slot.originX = ox
+            slot.originY = oy
+        }
+        // 不必在这里清屏：上一轮播完时 tick 已经 clear 过，且首帧自己会先 CLEAR 整块。
+        // 每次点击多锁一次 canvas 是纯浪费（实测占单次点击渲染开销的 1/4）。
+        return true
+    }
+
+    private fun buildLayer(slot: Slot, size: Int): Boolean {
         try {
             val c = SurfaceControl.Builder()
-                .setName(LAYER_NAME)
-                .setBufferSize(bw, bh)
+                .setName("$LAYER_NAME-${slot.id}")
+                .setBufferSize(size, size)
                 .setFormat(PixelFormat.TRANSLUCENT)
                 .build()
             val s = Surface(c)
-            val tx = SurfaceControl.Transaction()
-                .setLayer(c, LAYER_Z)
+            val tx = newTxn()
+                .setLayer(c, LAYER_Z + slot.id)
                 .setVisibility(c, false)
-            // setLayerStack 是隐藏 API，反射调用；失败就退化成默认（挂在所有 display 上）
+                .setPosition(c, 0f, 0f)
+            // setLayerStack 是 @hide，反射调用（进程入口已解 hidden API 限制）
             runCatching {
                 SurfaceControl.Transaction::class.java
                     .getMethod("setLayerStack", SurfaceControl::class.java, Int::class.javaPrimitiveType)
                     .invoke(tx, c, Display.DEFAULT_DISPLAY)
             }
-            if (useScale) {
-                val k = d / nd
-                val err = runCatching {
-                    SurfaceControl.Transaction::class.java
-                        .getMethod(
-                            "setScale",
-                            SurfaceControl::class.java,
-                            Float::class.javaPrimitiveType,
-                            Float::class.javaPrimitiveType
-                        )
-                        .invoke(tx, c, k, k)
-                }.exceptionOrNull()
-                if (err != null) {
-                    // 某些版本没有这个方法：放弃缩放，退回全屏 buffer
-                    val names = runCatching {
-                        SurfaceControl.Transaction::class.java.methods
-                            .filter { it.name.contains("atrix") || it.name.contains("cale") }
-                            .joinToString { it.name + "(" + it.parameterTypes.joinToString { p -> p.simpleName } + ")" }
-                    }.getOrDefault("?")
-                    println("FX setScale 失败: $err；候选=$names")
-                    matrixSupported = false
-                    runCatching { tx.close() }
-                    runCatching { s.release() }
-                    runCatching { c.release() }
-                    rebuild(w, h, d, d)
-                    return
-                }
-            }
             tx.apply()
-            surfaceControl = c
-            surface = s
-            screenW = w
-            screenH = h
-            bufW = bw
-            bufH = bh
-            density = d
-            dpr = if (useScale) nd else d
-            shown = false
-            clearBuffer()
-            println("FX surface screen=${w}x$h buffer=${bw}x$bh dpr=$dpr")
+            slot.control = c
+            slot.surface = s
+            slot.size = size
+            slot.originX = 0
+            slot.originY = 0
+            slot.shown = false
+            // 新 buffer 内容未定义，先清一遍，避免首次显示闪出脏像素
+            clearSlot(slot)
+            return true
         } catch (t: Throwable) {
-            println("FX rebuild failed: $t")
-            surfaceControl = null
-            surface = null
+            println("FX build layer failed: $t")
+            return false
         }
     }
 
-    private fun releaseSurface() {
-        runCatching { surfaceControl?.let { newTxn().setVisibility(it, false).apply() } }
-        runCatching { surface?.release() }
-        runCatching { surfaceControl?.release() }
-        surface = null
-        surfaceControl = null
-        shown = false
-        bufW = 0
-        bufH = 0
+    private fun releaseSlot(slot: Slot) {
+        runCatching { slot.control?.let { newTxn().setVisibility(it, false).apply() } }
+        runCatching { slot.surface?.release() }
+        runCatching { slot.control?.release() }
+        slot.surface = null
+        slot.control = null
+        slot.shown = false
+        slot.size = 0
+        slot.active = false
+    }
+
+    private fun clearAll() {
+        for (s in slots) {
+            s.engine.clear()
+            s.active = false
+            clearSlot(s)
+        }
+    }
+
+    private fun hideIdle() {
+        if (running) return
+        for (s in slots) {
+            if (!s.shown) continue
+            runCatching {
+                s.control?.let { newTxn().setVisibility(it, false).apply() }
+            }
+            s.shown = false
+        }
     }
 
     private fun newTxn() = SurfaceControl.Transaction()
-
-    private fun showLayer() {
-        val c = surfaceControl ?: return
-        if (shown) return
-        runCatching { newTxn().setVisibility(c, true).apply() }
-        shown = true
-    }
-
-    private fun hideLayer() {
-        val c = surfaceControl ?: return
-        if (!shown) return
-        runCatching { newTxn().setVisibility(c, false).apply() }
-        shown = false
-    }
-
-    private fun hideSoon() {
-        if (!running) {
-            clearBuffer()
-            hideLayer()
-        }
-    }
 
     // ---------------- 渲染循环 ----------------
 
@@ -282,7 +317,6 @@ class ShellFxRenderer(context: Context) {
         if (running) return
         running = true
         lastFrameNanos = 0L
-        showLayer()
         handler.post(frameRunnable)
     }
 
@@ -291,33 +325,47 @@ class ShellFxRenderer(context: Context) {
         val now = System.nanoTime()
         val dtMs = if (lastFrameNanos == 0L) FRAME_MS else (now - lastFrameNanos) / 1_000_000f
         lastFrameNanos = now
-        val clamped = dtMs.coerceIn(0f, MAX_DT_MS)
-        engine.advance((clamped / FRAME_MS) * speed)
+        val step = (dtMs.coerceIn(0f, MAX_DT_MS) / FRAME_MS) * speed
+
+        var any = false
         val t0 = System.nanoTime()
-        renderFrame()
+        for (s in slots) {
+            if (!s.active) continue
+            s.engine.advance(step)
+            if (s.engine.hasActive) {
+                renderSlot(s)
+                any = true
+            } else {
+                // 这一槽播完了：立刻收掉，别让它参与合成
+                s.active = false
+                clearSlot(s)
+                hideSlot(s)
+            }
+        }
         frameCostUs += (System.nanoTime() - t0) / 1000
         frameCount++
-        if (!engine.hasActive) {
+
+        if (!any) {
             running = false
-            clearBuffer()
-            hideLayer()
             val avg = if (frameCount > 0) frameCostUs / frameCount else 0
-            println("FX idle after $frameCount frames, draw avg=${avg}us buffer=${bufW}x$bufH")
+            println("FX idle after $frameCount frames, draw avg=${avg}us")
             frameCostUs = 0
             return
         }
         handler.postDelayed(frameRunnable, FRAME_MS.toLong())
     }
 
-    private fun renderFrame() {
-        val s = surface ?: return
+    private fun renderSlot(slot: Slot) {
+        val s = slot.surface ?: return
         var canvas: Canvas? = null
         try {
             canvas = s.lockCanvas(null) ?: return
             canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
             canvas.save()
-            canvas.scale(dpr, dpr)
-            engine.draw(canvas)
+            canvas.scale(density, density)
+            // 粒子坐标是屏幕绝对 dp，减掉本槽原点后落到 buffer 内
+            canvas.translate(-slot.originX / density, -slot.originY / density)
+            slot.engine.draw(canvas)
             canvas.restore()
         } catch (t: Throwable) {
             // 单帧失败忽略，下一帧继续
@@ -326,8 +374,8 @@ class ShellFxRenderer(context: Context) {
         }
     }
 
-    private fun clearBuffer() {
-        val s = surface ?: return
+    private fun clearSlot(slot: Slot) {
+        val s = slot.surface ?: return
         var canvas: Canvas? = null
         try {
             canvas = s.lockCanvas(null) ?: return
@@ -337,6 +385,14 @@ class ShellFxRenderer(context: Context) {
         } finally {
             if (canvas != null) runCatching { s.unlockCanvasAndPost(canvas) }
         }
+    }
+
+    private fun hideSlot(slot: Slot) {
+        if (!slot.shown) return
+        runCatching {
+            slot.control?.let { newTxn().setVisibility(it, false).apply() }
+        }
+        slot.shown = false
     }
 
     /** 供录制状态轮询线程切回主线程用 */
@@ -349,6 +405,24 @@ class ShellFxRenderer(context: Context) {
 
         /** 覆盖在应用之上、SystemUI 之下的一个足够高的 z（实测 2e6 可盖住桌面与全屏应用） */
         const val LAYER_Z = 2_000_000
+
+        /**
+         * 一次点击需要的可见半径（dp，scale=1 时）。
+         *
+         * 实测可见内容集中在 60dp 内，90dp 已能完整覆盖弧与火花；再大只是白白增加
+         * buffer 与合成面积。
+         */
+        const val EFFECT_RADIUS_DP = 90f
+
+        /**
+         * 同时可播的点击数量；超过就复用最老的槽。
+         *
+         * 一次特效约 0.4 秒，人手连点最快约 10 次/秒，所以 5 个槽足够覆盖；每个槽只
+         * 是一个 630×630 的小图层，5 个加起来（约 2M 像素）仍比原来一张全屏图层
+         * （3.5M 像素）少，多开几个不会让合成变重。
+         */
+        const val SLOT_COUNT = 5
+
         const val FRAME_MS = 1000f / 60f
         const val MAX_DT_MS = 50f
     }

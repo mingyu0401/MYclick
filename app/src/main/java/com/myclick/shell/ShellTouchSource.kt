@@ -109,9 +109,16 @@ class ShellTouchSource(
                     }
                     line.contains("SYN_REPORT") && pendingDown -> {
                         pendingDown = false
-                        if (curX >= 0 && curY >= 0) {
-                            val mapped = mapToScreen(dev, curX, curY) ?: continue
-                            onTap(mapped.first, mapped.second)
+                        if (curX < 0 || curY < 0) {
+                            // 驱动没登记坐标（少见）：一般是注入序列缺 ABS_MT_PRESSURE
+                            println("FX touch syn 但无坐标 x=$curX y=$curY")
+                        } else {
+                            val mapped = mapToScreen(dev, curX, curY)
+                            if (mapped == null) {
+                                println("FX touch mapToScreen=null raw=$curX,$curY")
+                            } else {
+                                onTap(mapped.first, mapped.second)
+                            }
                         }
                     }
                 }
