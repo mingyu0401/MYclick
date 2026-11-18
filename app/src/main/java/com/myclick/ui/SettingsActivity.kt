@@ -29,7 +29,7 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import com.myclick.R
-import com.myclick.access.AccessibilityFxHost
+import com.myclick.access.LocalFxHost
 import com.myclick.access.ClickAccessibilityService
 import com.myclick.core.Config
 import com.myclick.core.GlobalTouchReceiver
@@ -39,6 +39,9 @@ import com.myclick.core.RootHelper
 import com.myclick.core.ShizukuBridge
 import com.myclick.core.TouchRelay
 import com.myclick.fx.EffectSurfaceView
+import com.myclick.touch.EvdevTouchSource
+import rikka.shizuku.Shizuku
+import com.myclick.touch.PrivilegedShell
 
 /**
  * 模块设置页。
@@ -70,6 +73,32 @@ class SettingsActivity : Activity() {
 
     private val density: Float get() = resources.displayMetrics.density
 
+    /** Shizuku 授权结果：用户点了允许后立刻把事件源拉起来，不用再拨一次开关 */
+    private val shizukuGrantListener =
+        Shizuku.OnRequestPermissionResultListener { _, grantResult ->
+            if (grantResult == PackageManager.PERMISSION_GRANTED) {
+                runCatching { EvdevTouchSource.start(this, config) }
+                toast("Shizuku 已授权")
+            } else {
+                toast("Shizuku 未授权，Shizuku 模式无法工作")
+            }
+        }
+
+    override fun onDestroy() {
+        runCatching { Shizuku.removeRequestPermissionResultListener(shizukuGrantListener) }
+        super.onDestroy()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (!::config.isInitialized) return
+        // 从 Shizuku 授权框 / 后台回来时后端可能刚刚就绪，补一次启动；
+        // 进程被系统回收过也在这里恢复，不必让用户重新拨开关。
+        if (config.shizukuMode && config.enabled && !EvdevTouchSource.isRunning()) {
+            runCatching { EvdevTouchSource.start(this, config) }
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         config = Prefs.read(this)
@@ -82,6 +111,7 @@ class SettingsActivity : Activity() {
         config = autoResolveTarget(config)
         Prefs.write(this, config)
         syncGlobalReceiver()
+        runCatching { Shizuku.addRequestPermissionResultListener(shizukuGrantListener) }
 
         window.statusBarColor = Ui.BG
         window.navigationBarColor = Ui.BG
@@ -373,32 +403,60 @@ class SettingsActivity : Activity() {
         )
         box.addView(Ui.body(this, "⚠ 全局显示可能会厌烦，慎重打开；默认关闭，仅在录屏时显示特效。"))
 
-        box.addView(Ui.sectionLabel(this, "普通用户模式（免 Xposed）"))
-        box.addView(
-            Ui.group(
-                this,
-                Ui.switchRow(
-                    this,
-                    "纯悬浮窗模式",
-                    "不需要 root / LSPosed，用无障碍服务取点击位置",
-                    config.overlayOnly,
-                    confirmOnEnable = "不需要 root、不需要 LSPosed，靠无障碍服务拿到被点控件的位置，" +
-                        "再用悬浮窗绘制特效。\n\n需要两步授权：" +
-                        "\n1. 允许「显示在其他应用上层」\n2. 在系统「无障碍」里开启「MYclick 点击特效」" +
-                        "\n\n副作用：只能识别被点击的控件，点空白区域或游戏自绘界面可能没有特效，" +
-                        "触发也比框架模式略晚一帧。"
-                ) {
-                    config = config.copy(overlayOnly = it); save()
-                    if (it && !accessibilityServiceEnabled()) {
-                        AlertDialog.Builder(this)
-                            .setTitle("还差一步")
-                            .setMessage("纯悬浮窗模式需要开启无障碍服务，现在去系统设置里开启吗？")
-                            .setPositiveButton("去开启") { _, _ -> openAccessibilitySettings() }
-                            .setNegativeButton("稍后", null)
-                            .show()
-                    }
-                }
+        box.addView(Ui.sectionLabel(this, "免 Xposed 模式"))
+
+        var overlayRow: View? = null
+        val shizukuRow = Ui.switchRow(
+            this,
+            "Shizuku 模式",
+            "不需要 root，读触摸屏拿真实坐标（推荐）",
+            config.shizukuMode,
+            confirmOnEnable = "Shizuku 模式以 shell 身份读取触摸屏事件，拿到的是真实触摸坐标：" +
+                "\n· 点空白处、游戏、视频全屏控件都能出特效" +
+                "\n· 位置就是手指按下的地方，不会偏移" +
+                "\n· 不启用无障碍，系统不会弹「正在读取屏幕内容」的提示" +
+                "\n\n前提：已安装 Shizuku 并激活（无线调试或 root 均可，手机重启后需要重新激活）。"
+        ) {
+            config = config.copy(
+                shizukuMode = it,
+                // 两种免 root 模式共用同一个宿主，必须互斥，否则两路事件会画两份
+                overlayOnly = if (it) false else config.overlayOnly
             )
+            save()
+            overlayRow?.let { row -> Ui.syncSwitch(row, config.overlayOnly) }
+            if (it) afterShizukuEnabled()
+        }
+        overlayRow = Ui.switchRow(
+            this,
+            "纯悬浮窗模式",
+            "不需要 root / LSPosed，用无障碍服务取点击位置",
+            config.overlayOnly,
+            confirmOnEnable = "不需要 root、不需要 LSPosed，靠无障碍服务拿到被点控件的位置，" +
+                "再用悬浮窗绘制特效。\n\n需要两步授权：" +
+                "\n1. 允许「显示在其他应用上层」\n2. 在系统「无障碍」里开启「MYclick 点击特效」" +
+                "\n\n副作用：只能识别被点击的控件，点空白区域或游戏自绘界面可能没有特效，" +
+                "位置是控件中心而不是手指位置，部分系统会持续提示正在读取屏幕内容。"
+        ) {
+            config = config.copy(
+                overlayOnly = it,
+                shizukuMode = if (it) false else config.shizukuMode
+            )
+            save()
+            Ui.syncSwitch(shizukuRow, config.shizukuMode)
+            if (it && !accessibilityServiceEnabled()) {
+                AlertDialog.Builder(this)
+                    .setTitle("还差一步")
+                    .setMessage("纯悬浮窗模式需要开启无障碍服务，现在去系统设置里开启吗？")
+                    .setPositiveButton("去开启") { _, _ -> openAccessibilitySettings() }
+                    .setNegativeButton("稍后", null)
+                    .show()
+            }
+        }
+        box.addView(Ui.group(this, shizukuRow, overlayRow))
+        box.addView(
+            Ui.actionRow(this, "Shizuku 状态", PrivilegedShell.describe()) {
+                openShizuku()
+            }
         )
         box.addView(
             Ui.actionRow(this, "打开无障碍设置", "系统设置 → 无障碍 → MYclick 点击特效") {
@@ -408,7 +466,8 @@ class SettingsActivity : Activity() {
         box.addView(
             Ui.body(
                 this,
-                "开启纯悬浮窗模式后，「全局生效」和录屏内特效都会自动让位给它，避免两份特效叠在一起。"
+                "两种模式都开启后，「全局生效」和录屏内特效会自动让位，避免两份特效叠在一起。" +
+                    "只能同时启用一个。"
             )
         )
 
@@ -674,8 +733,11 @@ class SettingsActivity : Activity() {
         globalRows.forEach { Ui.syncSwitch(it, config.globalEffect) }
         syncGlobalReceiver()
         ensureOverlayPermission()
-        // 纯悬浮窗宿主就在本进程：开关变化直接同步；关闭时会立刻撤掉常驻窗口
-        runCatching { AccessibilityFxHost.sync(this, config) }
+        // 本进程宿主：无障碍 / Shizuku 两种模式共用，开关变化直接同步；
+        // 关闭时会立刻撤掉常驻窗口。
+        runCatching { LocalFxHost.sync(this, config) }
+        // Shizuku 事件源按开关启停
+        runCatching { EvdevTouchSource.onConfigChanged(this, config) }
     }
 
     /**
@@ -767,6 +829,80 @@ class SettingsActivity : Activity() {
         }.onFailure { toast("无法打开无障碍设置，请手动前往系统设置") }
     }
 
+    /**
+     * 打开 Shizuku 模式后的引导。
+     *
+     * 三条状态分开处理，避免用户开了开关却毫无反应：
+     *  - Shizuku 已授权 → 直接启动事件源
+     *  - Shizuku 在跑但没授权本应用 → 弹系统授权框
+     *  - 完全不可用 → 引导安装 / 激活，或者用 root
+     *
+     * 探测必须放后台：`su` 可能弹出 root 授权框并一直等，放在主线程就是一次 ANR。
+     */
+    private fun afterShizukuEnabled() {
+        Thread {
+            val backend = PrivilegedShell.backend()
+            val desc = PrivilegedShell.describe()
+            val needsGrant = PrivilegedShell.shizukuNeedsGrant()
+            runOnUiThread {
+                if (isFinishing || isDestroyed) return@runOnUiThread
+                when (backend) {
+                    PrivilegedShell.Backend.SHIZUKU -> {
+                        EvdevTouchSource.start(this, config)
+                        toast("Shizuku 模式已启动：$desc")
+                    }
+                    PrivilegedShell.Backend.ROOT -> {
+                        // 没有 Shizuku 但有 root：直接走 su
+                        EvdevTouchSource.start(this, config)
+                        toast("已通过 Root 启动触摸监听")
+                    }
+                    PrivilegedShell.Backend.NONE -> {
+                        if (needsGrant) {
+                            AlertDialog.Builder(this)
+                                .setTitle("需要授权")
+                                .setMessage("Shizuku 正在运行，但还没有授权给 MYclick。授权后即可读取触摸事件。")
+                                .setPositiveButton("授权") { _, _ ->
+                                    PrivilegedShell.requestShizukuPermission()
+                                }
+                                .setNegativeButton("稍后", null)
+                                .show()
+                        } else {
+                            AlertDialog.Builder(this)
+                                .setTitle("还不能用")
+                                .setMessage(
+                                    "Shizuku 模式需要 Shizuku 或 root。\n\n" +
+                                        "· 已装 Shizuku：打开它，用「无线调试」或「root」启动服务，" +
+                                        "然后回到这里重新打开开关\n" +
+                                        "· 没装 Shizuku：装好后按上面步骤激活\n\n" +
+                                        "如果不想折腾，可以关掉这个开关，改用「纯悬浮窗模式」（无障碍）。"
+                                )
+                                .setPositiveButton("打开 Shizuku") { _, _ -> openShizuku() }
+                                .setNegativeButton("知道了", null)
+                                .show()
+                        }
+                    }
+                }
+            }
+        }.start()
+    }
+
+    private fun openShizuku() {
+        val pkg = "moe.shizuku.privileged.api"
+        val launch = runCatching { packageManager.getLaunchIntentForPackage(pkg) }.getOrNull()
+        if (launch != null) {
+            runCatching { startActivity(launch) }
+                .onFailure { toast("无法启动 Shizuku") }
+            return
+        }
+        // 没装：给个下载页
+        runCatching {
+            startActivity(
+                Intent(Intent.ACTION_VIEW, Uri.parse("https://shizuku.rikka.app/"))
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+        }.onFailure { toast("请先安装 Shizuku") }
+    }
+
     private fun grantOverlay() {
         val status = ShizukuBridge.probe(this)
         val pkg = config.targetPackage
@@ -803,8 +939,8 @@ class SettingsActivity : Activity() {
     }
 
     private fun versionName(): String = runCatching {
-        packageManager.getPackageInfo(packageName, 0).versionName ?: "1.0.5"
-    }.getOrDefault("1.0.5")
+        packageManager.getPackageInfo(packageName, 0).versionName ?: "1.0.6"
+    }.getOrDefault("1.0.6")
 
     private fun toast(text: String) {
         android.widget.Toast.makeText(this, text, android.widget.Toast.LENGTH_SHORT).show()

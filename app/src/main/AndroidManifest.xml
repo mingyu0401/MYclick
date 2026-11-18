@@ -6,6 +6,8 @@
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.WRITE_SETTINGS" />
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
+    <!-- Shizuku 模式：向 Shizuku 申请 shell 身份（读触摸屏设备节点用） -->
+    <uses-permission android:name="moe.shizuku.manager.permission.API_V23" />
 
     <application
         android:allowBackup="true"
@@ -13,6 +15,17 @@
         android:label="@string/app_name"
         android:supportsRtl="true"
         android:theme="@style/AppTheme">
+
+        <!-- ============ Shizuku 通道 ============ -->
+        <!-- provider 库只提供类，声明必须由 App 自己写，否则 Shizuku 的 binder
+             永远收不到（Shizuku.pingBinder() 恒为 false）。 -->
+        <provider
+            android:name="rikka.shizuku.ShizukuProvider"
+            android:authorities="${applicationId}.shizuku"
+            android:enabled="true"
+            android:exported="true"
+            android:multiprocess="false"
+            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
 
         <!-- ============ LSPosed 模块声明 ============ -->
         <meta-data android:name="xposedmodule" android:value="true" />

@@ -16,6 +16,7 @@ data class Config(
     val gateMode: Int = GATE_AUTO,
     val globalEffect: Boolean = false,       // 全局生效：未录屏时也显示点击特效（默认关闭）
     val overlayOnly: Boolean = false,        // 纯悬浮窗模式：普通用户用无障碍服务取点击位置（默认关闭）
+    val shizukuMode: Boolean = false,        // Shizuku 模式：以 shell 身份读触摸屏设备，拿真实坐标（默认关闭）
     val hideNativeDot: Boolean = true,       // 强制 show_touches=0，隐藏原生白点
     val dprCapEnabled: Boolean = true,       // DPR 上限 2x
     val targetPackage: String = DEFAULT_TARGET,
@@ -73,6 +74,7 @@ data class Config(
                 gateMode = b.getInt("gateMode", d.gateMode),
                 globalEffect = b.getBoolean("globalEffect", d.globalEffect),
                 overlayOnly = b.getBoolean("overlayOnly", d.overlayOnly),
+                shizukuMode = b.getBoolean("shizukuMode", d.shizukuMode),
                 hideNativeDot = b.getBoolean("hideNativeDot", d.hideNativeDot),
                 dprCapEnabled = b.getBoolean("dprCapEnabled", d.dprCapEnabled),
                 targetPackage = b.getString("targetPackage") ?: d.targetPackage,
@@ -99,6 +101,7 @@ data class Config(
         putInt("gateMode", gateMode)
         putBoolean("globalEffect", globalEffect)
         putBoolean("overlayOnly", overlayOnly)
+        putBoolean("shizukuMode", shizukuMode)
         putBoolean("hideNativeDot", hideNativeDot)
         putBoolean("dprCapEnabled", dprCapEnabled)
         putString("targetPackage", targetPackage)
@@ -119,6 +122,16 @@ data class Config(
         THEME_LIGHT -> false
         else -> (uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
     }
+
+    /**
+     * 是否由「模块进程自己的悬浮窗宿主」承接事件与绘制。
+     *
+     * 两种免 root 模式共用同一个宿主和同一个覆盖层，只是事件来源不同：
+     *  - [overlayOnly]  无障碍服务读控件 bounds
+     *  - [shizukuMode]  以 shell 身份读触摸屏设备，拿真实触摸坐标
+     * 打开任意一个，框架 / 录屏 / 全局三条通道都必须让位，否则会叠画。
+     */
+    fun usesLocalHost(): Boolean = overlayOnly || shizukuMode
 
     fun palette(dark: Boolean): Palette = if (dark) {
         Palette(darkFill, darkArcStart, darkArcEnd, darkSpark)

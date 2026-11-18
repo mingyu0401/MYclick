@@ -169,10 +169,10 @@ class OverlayController(
             // （刚开机 / 正在挂窗口）时先留着，随时接住这一击。
             val want = when {
                 // 纯悬浮窗模式：只在开关打开时挂窗口，和录屏 / 全局模式都无关
-                overlayOnlyHost -> cfg.enabled && cfg.overlayOnly
+                overlayOnlyHost -> cfg.enabled && cfg.usesLocalHost()
                 // 全局宿主：纯悬浮窗模式打开时让位，避免两套宿主各画一份
-                globalHost -> cfg.enabled && global && !cfg.overlayOnly
-                else -> cfg.enabled && !cfg.overlayOnly && (!global || !GlobalOwner.owned)
+                globalHost -> cfg.enabled && global && !cfg.usesLocalHost()
+                else -> cfg.enabled && !cfg.usesLocalHost() && (!global || !GlobalOwner.owned)
             }
             if (want) attach(cfg) else detach()
         }
@@ -216,12 +216,12 @@ class OverlayController(
         // 纯悬浮窗模式有一个独立宿主（无障碍驱动），此时前两者都让位。
         val global = cfg.globalEffect || cfg.gateMode == Config.GATE_ALWAYS
         val allow = when {
-            overlayOnlyHost -> cfg.enabled && cfg.overlayOnly
-            globalHost -> cfg.enabled && global && !cfg.overlayOnly
+            overlayOnlyHost -> cfg.enabled && cfg.usesLocalHost()
+            globalHost -> cfg.enabled && global && !cfg.usesLocalHost()
             else ->
                 // 全局模式且归属未交还 → 一定不画；
                 // 归属交还（全局宿主还没挂好）时即使配置写着全局也要接住这一击。
-                cfg.enabled && !cfg.overlayOnly && !GlobalOwner.owned &&
+                cfg.enabled && !cfg.usesLocalHost() && !GlobalOwner.owned &&
                     RecordingState.isActive() && (!global || GlobalOwner.handedBack)
         }
         if (!allow) return

@@ -98,9 +98,9 @@ class InputEventHook(
         runCatching { ConfigStore.maybeRefreshAsync(Contexts.any()) }
         val cfg = ConfigStore.value
         if (!cfg.enabled) return
-        // 纯悬浮窗模式：绘制权在模块进程的无障碍宿主上，框架 / 录屏 / app 作用域
-        // 三条通道全部静默，否则又会变成两份叠画。
-        if (cfg.overlayOnly) return
+        // 免 root 模式（无障碍 / Shizuku）：绘制权在模块进程自己的宿主上，
+        // 框架 / 录屏 / app 作用域三条通道全部静默，否则又会变成两份叠画。
+        if (cfg.usesLocalHost()) return
         enterTrace {
             "enter n=${args.size} enabled=${cfg.enabled} " +
                 args.joinToString(",") { it?.javaClass?.simpleName ?: "null" }

@@ -36,7 +36,7 @@ class ClickAccessibilityService : AccessibilityService() {
             "connected flags=${serviceInfo?.flags} " +
                 "cfg=${cfg?.let { "enabled=${it.enabled} overlayOnly=${it.overlayOnly}" }}"
         )
-        if (cfg != null && cfg.enabled && cfg.overlayOnly) AccessibilityFxHost.sync(this, cfg)
+        if (cfg != null && cfg.enabled && cfg.overlayOnly) LocalFxHost.sync(this, cfg)
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
@@ -90,7 +90,7 @@ class ClickAccessibilityService : AccessibilityService() {
                 "x=${bounds.exactCenterX()} y=${bounds.exactCenterY()} $bounds"
         )
         runCatching {
-            AccessibilityFxHost.emit(
+            LocalFxHost.emit(
                 this,
                 cfg,
                 bounds.exactCenterX(),
