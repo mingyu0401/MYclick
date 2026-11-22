@@ -13,3 +13,4 @@ captures/
 _re/
 dist/
 .DS_Store
+.android-user/
