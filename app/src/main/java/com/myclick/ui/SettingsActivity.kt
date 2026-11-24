@@ -463,31 +463,6 @@ class SettingsActivity : Activity() {
         updateModeSelection()
         refreshModeStatus()
 
-        // ---- 常用开关 ----
-        box.addView(Ui.sectionLabel(this, "常用开关"))
-        box.addView(
-            Ui.group(
-                this,
-                Ui.switchRow(this, "启用特效", "总开关，关闭后任何方式都不再显示特效", config.enabled) {
-                    config = config.copy(enabled = it); save()
-                    refreshModeStatus()
-                },
-                Ui.switchRow(
-                    this,
-                    "全局生效",
-                    "不录屏时也显示特效，慎重打开",
-                    config.globalEffect,
-                    confirmOnEnable = "开启后，即使没有在录屏，每次点击屏幕也会出现特效。" +
-                        "\n\n全局显示可能会厌烦，慎重打开。（默认仅录屏时显示）"
-                ) {
-                    config = config.copy(globalEffect = it); save()
-                }.also { globalRows += it },
-                Ui.switchRow(this, "隐藏系统触摸圆点", "录屏时不再显示系统自带的白色圆点", config.hideNativeDot) {
-                    config = config.copy(hideNativeDot = it); save()
-                }
-            )
-        )
-
         // ---- 设备信息 ----
         box.addView(Ui.sectionLabel(this, "设备信息"))
         box.addView(
@@ -824,7 +799,8 @@ class SettingsActivity : Activity() {
         targetEdit = targetRow.input
         extraEdit = extraRow.input
         box.addView(Ui.group(this, targetRow.view, extraRow.view))
-        box.addView(Ui.secondaryButton(this, "重新探测本机录屏应用并自动选定") { detectTarget() })
+        box.addView(Ui.secondaryButton(this, "探测本机录屏应用并选择") { detectTarget() })
+        box.addView(Ui.body(this, "非ColorOS不保证录屏检测和效果正常。"))
 
         box.addView(Ui.sectionLabel(this, "工具与链接"))
         box.addView(
@@ -1113,13 +1089,15 @@ class SettingsActivity : Activity() {
                 .setPositiveButton("好", null).show()
             return
         }
-        val chosen = found.first()
-        targetEdit.setText(chosen)
-        applyTargetFields()
+        val current = targetEdit.text.toString().trim()
         AlertDialog.Builder(this)
-            .setTitle("已自动选定本机录屏应用")
-            .setMessage("当前：$chosen\n\n本机候选：\n" + found.joinToString("\n"))
-            .setPositiveButton("好", null)
+            .setTitle("选择目标录屏应用")
+            .setSingleChoiceItems(found.toTypedArray(), found.indexOf(current).coerceAtLeast(0)) { dialog, which ->
+                targetEdit.setText(found[which])
+                applyTargetFields()
+                dialog.dismiss()
+            }
+            .setNegativeButton("取消", null)
             .show()
     }
 
