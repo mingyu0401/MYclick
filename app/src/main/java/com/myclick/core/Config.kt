@@ -163,6 +163,12 @@ data class Config(
      */
     fun usesLocalHost(): Boolean = shizukuMode
 
+    /**
+     * 是否需要绘制特效：「仅在录屏时显示」或「全局生效」任一开启即为 true。
+     * 全局生效不依赖录屏开关，所以各处的总闸门统一用它，而不是只看 [enabled]。
+     */
+    fun effectOn(): Boolean = enabled || globalEffect || gateMode == GATE_ALWAYS
+
     /** 切换运行方式；同时维护兼容字段 [shizukuMode] */
     fun withRunMode(mode: Int): Config =
         copy(runMode = mode, shizukuMode = mode != RUN_LSPOSED)

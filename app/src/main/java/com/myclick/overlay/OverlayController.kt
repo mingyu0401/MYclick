@@ -172,10 +172,10 @@ class OverlayController(
                 // 录制状态来自 RecorderWatcher 的 shell 查询；不在录屏时窗口直接撤掉，
                 // 既不会在录屏之外出特效，也不会让一个全屏图层长期盖在别的应用上。
                 localHost ->
-                    cfg.enabled && cfg.usesLocalHost() && (global || RecordingState.isActive())
+                    cfg.usesLocalHost() && (global || cfg.enabled && RecordingState.isActive())
                 // 全局宿主：Shizuku 模式打开时让位，避免两套宿主各画一份
-                globalHost -> cfg.enabled && global && !cfg.usesLocalHost()
-                else -> cfg.enabled && !cfg.usesLocalHost() && (!global || !GlobalOwner.owned)
+                globalHost -> global && !cfg.usesLocalHost()
+                else -> cfg.effectOn() && !cfg.usesLocalHost() && (!global || !GlobalOwner.owned)
             }
             if (want) attach(cfg) else detach()
         }
@@ -219,12 +219,12 @@ class OverlayController(
         val allow = when {
             // Shizuku 宿主：录制状态由 RecorderWatcher 通过 shell 查询 media_projection 后写入
             localHost ->
-                cfg.enabled && cfg.usesLocalHost() && (global || RecordingState.isActive())
-            globalHost -> cfg.enabled && global && !cfg.usesLocalHost()
+                cfg.usesLocalHost() && (global || cfg.enabled && RecordingState.isActive())
+            globalHost -> global && !cfg.usesLocalHost()
             else ->
                 // 全局模式且归属未交还 → 一定不画；
                 // 归属交还（全局宿主还没挂好）时即使配置写着全局也要接住这一击。
-                cfg.enabled && !cfg.usesLocalHost() && !GlobalOwner.owned &&
+                cfg.effectOn() && !cfg.usesLocalHost() && !GlobalOwner.owned &&
                     RecordingState.isActive() && (!global || GlobalOwner.handedBack)
         }
         if (!allow) return

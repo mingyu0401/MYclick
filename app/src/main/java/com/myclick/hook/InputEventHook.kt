@@ -97,7 +97,7 @@ class InputEventHook(
         // 会让每次按下多等 5~20ms。
         runCatching { ConfigStore.maybeRefreshAsync(Contexts.any()) }
         val cfg = ConfigStore.value
-        if (!cfg.enabled) return
+        if (!cfg.effectOn()) return
         // 免 root 模式（无障碍 / Shizuku）：绘制权在模块进程自己的宿主上，
         // 框架 / 录屏 / app 作用域三条通道全部静默，否则又会变成两份叠画。
         if (cfg.usesLocalHost()) return

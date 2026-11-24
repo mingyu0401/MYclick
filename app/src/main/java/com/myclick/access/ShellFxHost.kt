@@ -57,7 +57,7 @@ object ShellFxHost {
     fun sync(context: Context, cfg: Config) {
         appContext = context.applicationContext ?: context
         lastConfig = cfg
-        if (!cfg.enabled || !cfg.shizukuMode) {
+        if (!cfg.effectOn() || !cfg.shizukuMode) {
             stopLocked(context, "config off")
             return
         }
@@ -160,7 +160,7 @@ object ShellFxHost {
             starting = false
         }
         val cfg = lastConfig
-        if (cfg != null && cfg.enabled && cfg.shizukuMode) {
+        if (cfg != null && cfg.effectOn() && cfg.shizukuMode) {
             pushConfig(h, cfg)
         }
     }

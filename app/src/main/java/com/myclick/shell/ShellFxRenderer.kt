@@ -163,7 +163,7 @@ class ShellFxRenderer(private val context: Context) {
         speed = EffectEngine.RenderConfig.from(cfg, dark).speed
         resolvePeriod()
         for (s in slots) s.engine.update(cfg, dark)
-        if (!cfg.enabled) {
+        if (!cfg.effectOn()) {
             clearAll()
             hideIdle()
         }
@@ -179,7 +179,7 @@ class ShellFxRenderer(private val context: Context) {
     }
 
     fun emit(xPx: Float, yPx: Float) {
-        if (!config.enabled) {
+        if (!config.effectOn()) {
             println("FX tap dropped: disabled")
             return
         }

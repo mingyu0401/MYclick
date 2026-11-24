@@ -73,6 +73,8 @@ class SettingsActivity : Activity() {
     private val navLabelColors = mutableListOf<Int>()
     /** 首页 / 特效页各有一份「全局生效」开关，切换时静默同步选中状态 */
     private val globalRows = mutableListOf<View>()
+    /** 「仅在录屏时显示特效」开关，与 [globalRows] 互斥，切换时同样静默同步 */
+    private val recordingRows = mutableListOf<View>()
     private var globalReceiverEnabled: Boolean? = null
     private var overlayGrantAttempted = false
     private var shizukuPermissionPrompted = false
@@ -139,11 +141,11 @@ class SettingsActivity : Activity() {
         if (!::config.isInitialized) return
         // 从 Shizuku 授权框 / 后台回来时后端可能刚刚就绪，补一次启动；
         // 进程被系统回收过也在这里恢复，不必让用户重新拨开关。
-        if (config.shizukuMode && config.enabled && !ShellFxHost.isRunning()) {
+        if (config.shizukuMode && config.effectOn() && !ShellFxHost.isRunning()) {
             runCatching { ShellFxHost.sync(this, config) }
         }
         // 服务可能被系统回收过，回来时补一次
-        if (config.shizukuMode && config.enabled) runCatching { FxService.sync(this) }
+        if (config.shizukuMode && config.effectOn()) runCatching { FxService.sync(this) }
         window.decorView.post { requestShizukuPermissionIfNeeded() }
         // 从 Shizuku / root 管理器授权回来时，卡片状态要跟着更新
         refreshModeStatus()
@@ -156,6 +158,10 @@ class SettingsActivity : Activity() {
         // 否则 UI 显示关闭、实际却一直全局显示，状态会对不上。
         if (config.gateMode == Config.GATE_ALWAYS) {
             config = config.copy(globalEffect = true, gateMode = Config.GATE_AUTO)
+        }
+        // 两个开关互斥：旧配置若两个都开着，以「全局生效」为准，关掉录屏开关
+        if (config.globalEffect && config.enabled) {
+            config = config.copy(enabled = false)
         }
         // 目标包名自动选定为本机真实安装的录屏 App；写盘时会自动广播给被 Hook 进程
         config = autoResolveTarget(config)
@@ -543,7 +549,7 @@ class SettingsActivity : Activity() {
                 // 只在当前选中的那张卡片上追加运行情况
                 fun extra(mode: Int): String = when {
                     cfg.runMode != mode -> ""
-                    !cfg.enabled -> " · 特效总开关已关闭"
+                    !cfg.effectOn() -> " · 特效总开关已关闭"
                     mode != Config.RUN_LSPOSED && hostRunning -> " · 绘制进程运行中"
                     else -> ""
                 }
@@ -703,11 +709,11 @@ class SettingsActivity : Activity() {
             Ui.group(
                 this,
                 Ui.switchRow(this, "全局生效", "全局显示可能会厌烦，慎重打开", config.globalEffect) {
-                    config = config.copy(globalEffect = it); save()
+                    config = config.copy(globalEffect = it, enabled = config.enabled && !it); save()
                 }.also { globalRows += it },
-                Ui.switchRow(this, "仅在录屏时显示特效", "关闭后所有 Hook 直接跳过", config.enabled) {
-                    config = config.copy(enabled = it); save()
-                },
+                Ui.switchRow(this, "仅在录屏时显示特效", "与全局生效互斥，录屏时才绘制", config.enabled) {
+                    config = config.copy(enabled = it, globalEffect = config.globalEffect && !it); save()
+                }.also { recordingRows += it },
                 Ui.seekRow(this, "SCALE 大小", "默认 1.0", config.scale, 5, 30) {
                     config = config.copy(scale = it / 10f); save()
                 },
@@ -1018,15 +1024,16 @@ class SettingsActivity : Activity() {
         Prefs.write(this, config)
         preview.applyConfig(config)
         updateThemeUi()
-        // 首页 / 特效页两份「全局生效」开关保持一致（静默，不弹确认框）
+        // 两个互斥开关的选中状态跟着配置走（静默，不弹确认框）
         globalRows.forEach { Ui.syncSwitch(it, config.globalEffect) }
+        recordingRows.forEach { Ui.syncSwitch(it, config.enabled) }
         syncGlobalReceiver()
         ensureOverlayPermission()
         // 本进程宿主：开关变化直接同步；关闭时会立刻收掉绘制进程
         runCatching { ShellFxHost.sync(this, config) }
         // 前台服务保活：退出界面后特效仍要继续工作（否则 ColorOS 几秒回收进程）
         runCatching { FxService.sync(this) }
-        if (config.enabled && config.shizukuMode) ensureNotifyPermission()
+        if (config.effectOn() && config.shizukuMode) ensureNotifyPermission()
     }
 
     /**
@@ -1162,7 +1169,7 @@ class SettingsActivity : Activity() {
     private fun requestShizukuPermissionIfNeeded(): Boolean {
         if (shizukuPermissionPrompted) return false
         // 只有选了 Shizuku 模式才去申请；Root 模式用户不该被 Shizuku 弹窗打扰
-        if (!::config.isInitialized || !config.enabled || config.runMode != Config.RUN_SHIZUKU) return false
+        if (!::config.isInitialized || !config.effectOn() || config.runMode != Config.RUN_SHIZUKU) return false
         if (!PrivilegedShell.shizukuNeedsGrant()) return false
         shizukuPermissionPrompted = true
         val requested = PrivilegedShell.requestShizukuPermission()

@@ -18,7 +18,6 @@ class GlobalTouchReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
         try {
             val cfg = Prefs.read(context)
-            if (!cfg.enabled) return
             if (!cfg.globalEffect && cfg.gateMode != Config.GATE_ALWAYS) return
             val event = TouchRelay.parseTouch(intent, cfg.nonce) ?: return
             val app = context.applicationContext ?: context

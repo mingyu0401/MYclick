@@ -39,7 +39,7 @@ class FxService : Service() {
             return START_NOT_STICKY
         }
         val cfg = runCatching { Prefs.read(this) }.getOrNull()
-        if (cfg != null && cfg.shizukuMode && cfg.enabled) {
+        if (cfg != null && cfg.shizukuMode && cfg.effectOn()) {
             ShellFxHost.sync(this, cfg)
         } else {
             // 开关已经关了：别留一个空转的前台服务
@@ -104,7 +104,7 @@ class FxService : Service() {
         /** 按当前配置启停前台服务；幂等 */
         fun sync(context: Context) {
             val cfg = runCatching { Prefs.read(context) }.getOrNull() ?: return
-            val want = cfg.enabled && cfg.shizukuMode
+            val want = cfg.effectOn() && cfg.shizukuMode
             val intent = Intent(context, FxService::class.java)
             if (want) {
                 runCatching { context.startForegroundService(intent) }
