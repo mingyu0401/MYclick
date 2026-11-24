@@ -5,20 +5,35 @@ plugins {
 android {
     namespace = "com.myclick"
     compileSdk = 36
+    ndkVersion = "28.2.13676358"
+
+    externalNativeBuild {
+        ndkBuild {
+            path = file("src/main/jni/Android.mk")
+        }
+    }
 
     defaultConfig {
         applicationId = "com.myclick"
         minSdk = 31              // Android 12
         targetSdk = 36
-        versionCode = 13
-        versionName = "1.0.12"
+        versionCode = 41
+        versionName = "1.0.40"
         // 模块本身不需要任何运行时三方库：UI 全部用 framework 控件手写。
     }
 
     signingConfigs {
         // release 默认复用 debug 签名，保证 assembleRelease 产出的 APK 直接可安装。
         getByName("debug") {
-            // 使用 AGP 默认 debug.keystore
+            // 有工程内 debug key 时优先使用它，避免换环境后签名漂移；
+            // 没有则回落到 AGP 默认 debug.keystore（供干净检出使用）。
+            val projectKey = rootProject.file(".android-user/debug.keystore")
+            if (projectKey.isFile) {
+                storeFile = projectKey
+                storePassword = "android"
+                keyAlias = "androiddebugkey"
+                keyPassword = "android"
+            }
         }
     }
 
@@ -39,6 +54,9 @@ android {
     }
 
     packaging {
+        // app_process 以绝对路径 System.load() 原生库，必须让安装器把 .so
+        // 解压到 nativeLibraryDir；默认的“直接从 APK 映射”模式没有实体文件。
+        jniLibs.useLegacyPackaging = true
         resources.excludes += setOf(
             "META-INF/*.kotlin_module",
             "kotlin/**",

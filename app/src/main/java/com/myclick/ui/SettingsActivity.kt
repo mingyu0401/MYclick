@@ -4,11 +4,15 @@ import android.animation.ValueAnimator
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.ComponentName
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.res.Configuration
+import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.graphics.Color
-import android.graphics.Outline
 import android.graphics.Typeface
+import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Build
@@ -17,7 +21,9 @@ import android.provider.Settings
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewGroup
 import android.view.ViewOutlineProvider
+import android.view.WindowInsetsController
 import android.view.animation.DecelerateInterpolator
 import android.view.animation.OvershootInterpolator
 import android.widget.EditText
@@ -31,6 +37,7 @@ import com.myclick.access.ShellFxHost
 import com.myclick.core.Config
 import com.myclick.core.FxService
 import com.myclick.core.GlobalTouchReceiver
+import com.myclick.core.NightMode
 import com.myclick.core.PackageDetector
 import com.myclick.core.Prefs
 import com.myclick.core.RootHelper
@@ -43,8 +50,9 @@ import com.myclick.touch.PrivilegedShell
 /**
  * 模块设置页。
  *
- * 布局参照 ONextBox：纯黑底 + 大标题 + 石板蓝主卡 + 双列状态卡 + 分组卡片列表，
+ * 布局参照 ONextBox：大标题 + 石板蓝主卡 + 双列状态卡 + 分组卡片列表，
  * 底部悬浮胶囊导航把内容拆成「首页 / 特效 / 关于」三页，避免单页长列表。
+ * 深浅色跟随「主题」设置（默认跟随系统）：界面、弹窗和点击特效共用同一套判定。
  * 全部使用 framework 控件手写，不引入 AndroidX / Material。
  */
 class SettingsActivity : Activity() {
@@ -65,8 +73,15 @@ class SettingsActivity : Activity() {
     private val globalRows = mutableListOf<View>()
     private var globalReceiverEnabled: Boolean? = null
     private var overlayGrantAttempted = false
+    private var shizukuPermissionPrompted = false
     private lateinit var navIndicator: View
     private var currentTab = -1
+
+    /** 「一键切换」按钮与两套调色板标题，切换后要跟着判定结果更新文案 */
+    private var themeButton: ImageView? = null
+    private var themeTransitioning = false
+    private var darkPaletteLabel: TextView? = null
+    private var lightPaletteLabel: TextView? = null
 
     private val density: Float get() = resources.displayMetrics.density
 
@@ -80,6 +95,31 @@ class SettingsActivity : Activity() {
                 toast("Shizuku 未授权，Shizuku 模式无法工作")
             }
         }
+
+    /**
+     * 让「强制深色 / 强制浅色」也作用于系统资源主题（弹窗、EditText、Switch 等）。
+     *
+     * 只改 Ui 的调色板是不够的：Activity 的主题在 attachBaseContext 时就已经按
+     * Configuration 解析完成。这里在挂载前把 uiMode 覆写成配置里的强制值，
+     * values-night 资源就会正确命中；跟随系统时保持原样。
+     */
+    override fun attachBaseContext(newBase: Context) {
+        val cfg = runCatching { Prefs.read(newBase) }.getOrNull()
+        val forced = when (cfg?.themeMode) {
+            Config.THEME_DARK -> true
+            Config.THEME_LIGHT -> false
+            else -> null
+        }
+        if (forced == null) {
+            super.attachBaseContext(newBase)
+            return
+        }
+        val config = Configuration(newBase.resources.configuration).apply {
+            uiMode = (uiMode and Configuration.UI_MODE_NIGHT_MASK.inv()) or
+                (if (forced) Configuration.UI_MODE_NIGHT_YES else Configuration.UI_MODE_NIGHT_NO)
+        }
+        super.attachBaseContext(newBase.createConfigurationContext(config))
+    }
 
     override fun onDestroy() {
         runCatching { Shizuku.removeRequestPermissionResultListener(shizukuGrantListener) }
@@ -96,6 +136,7 @@ class SettingsActivity : Activity() {
         }
         // 服务可能被系统回收过，回来时补一次
         if (config.shizukuMode && config.enabled) runCatching { FxService.sync(this) }
+        window.decorView.post { requestShizukuPermissionIfNeeded() }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -115,8 +156,12 @@ class SettingsActivity : Activity() {
         runCatching { FxService.sync(this) }
         runCatching { Shizuku.addRequestPermissionResultListener(shizukuGrantListener) }
 
+        // 界面深浅色与点击特效共用同一套判定：跟随系统 / 强制深色 / 强制浅色
+        Ui.applyTheme(config.isDark(NightMode.isDark(this)))
+        window.setBackgroundDrawable(ColorDrawable(Ui.BG))
         window.statusBarColor = Ui.BG
         window.navigationBarColor = Ui.BG
+        window.isNavigationBarContrastEnforced = false
 
         val root = FrameLayout(this).apply {
             setBackgroundColor(Ui.BG)
@@ -149,10 +194,44 @@ class SettingsActivity : Activity() {
             gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
             bottomMargin = dip(24f)
         })
+        // 主题按钮：三页共用一个，浮在右上角，图标随当前档位变化。
+        // 垂直位置和页面大标题（34sp，上内边距 30dp）的文字中线对齐，
+        // 否则会比「首页」低一截，看着是歪的。
+        root.addView(buildThemeButton(), FrameLayout.LayoutParams(dip(46f), dip(46f)).apply {
+            gravity = Gravity.TOP or Gravity.END
+            topMargin = dip(30f)
+            marginEnd = dip(20f)
+        })
         setContentView(root)
+        applySystemBarIcons()
 
         selectTab(savedInstanceState?.getInt(KEY_TAB, 0) ?: 0)
-        preview.post { preview.applyConfig(config, resources.configuration.uiMode) }
+        preview.post { preview.applyConfig(config) }
+
+        // 主题切换重建：把上一实例的界面快照淡出，平滑过渡到新主题
+        ThemeTransition.pending?.let { snapshot ->
+            ThemeTransition.pending = null
+            playThemeFade(snapshot)
+        }
+    }
+
+    /**
+     * 状态栏/导航栏图标明暗。
+     *
+     * 必须等 decorView 建好之后再取 controller（onCreate 里 window.insetsController
+     * 会因 DecorView 为 null 抛 NPE，ColorOS 上已实测崩溃）；窗口重新挂载时（例如
+     * recreate）再调一次，保证图标颜色跟界面一致。
+     */
+    private fun applySystemBarIcons() {
+        val c = window.decorView.windowInsetsController ?: return
+        val light = WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or
+            WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS
+        c.setSystemBarsAppearance(if (Ui.isDark) 0 else light, light)
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) applySystemBarIcons()
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -181,7 +260,7 @@ class SettingsActivity : Activity() {
 
         // 选中态高亮胶囊：切换时平滑滑到对应 tab
         navIndicator = View(this).apply {
-            background = Ui.cardBg(this@SettingsActivity, Color.parseColor("#3B3B3B"), 100f)
+            background = Ui.cardBg(this@SettingsActivity, Ui.NAV_PILL, 100f)
             alpha = 0f
         }
         container.addView(navIndicator, FrameLayout.LayoutParams(dip(92f), dip(52f)).apply {
@@ -263,7 +342,7 @@ class SettingsActivity : Activity() {
         navIndicator.post { positionIndicator(index, animate) }
 
         if (index == TAB_FX) {
-            preview.post { preview.applyConfig(config, resources.configuration.uiMode) }
+            preview.post { preview.applyConfig(config) }
         }
     }
 
@@ -426,7 +505,7 @@ class SettingsActivity : Activity() {
         )
         box.addView(
             Ui.actionRow(this, "Shizuku 状态", PrivilegedShell.describe()) {
-                openShizuku()
+                if (!requestShizukuPermissionIfNeeded()) openShizuku()
             }
         )
         box.addView(
@@ -454,17 +533,14 @@ class SettingsActivity : Activity() {
         clipToOutline = true
         layoutParams = LinearLayout.LayoutParams(Ui.MATCH, dip(164f))
 
-        // 与桌面 App 图标共用同一个 vector，圆形裁切后自然融入主卡
+        // 与桌面 App 图标共用同一个 vector，圆形裁切后自然融入主卡。
+        // 圆形裁切放在 Drawable 里逐帧做，避免重建后 outline 未就绪时露出方形底。
         addView(
             ImageView(this@SettingsActivity).apply {
-                setImageResource(R.drawable.ic_launcher)
+                setImageDrawable(
+                    CircleClipDrawable(resources.getDrawable(R.drawable.ic_launcher, theme).mutate())
+                )
                 scaleType = ImageView.ScaleType.FIT_CENTER
-                outlineProvider = object : ViewOutlineProvider() {
-                    override fun getOutline(view: View, outline: Outline) {
-                        outline.setOval(0, 0, view.width, view.height)
-                    }
-                }
-                clipToOutline = true
             },
             FrameLayout.LayoutParams(dip(132f), dip(132f), Gravity.END or Gravity.CENTER_VERTICAL).apply {
                 rightMargin = dip(16f)
@@ -559,9 +635,6 @@ class SettingsActivity : Activity() {
                 Ui.seekRow(this, "动画速度", "1.0 = 60fps 原速", config.speed, 3, 30) {
                     config = config.copy(speed = it / 10f); save()
                 },
-                Ui.choiceRow(this, "主题", R.array.theme_modes, config.themeMode) {
-                    config = config.copy(themeMode = it); save()
-                },
                 Ui.choiceRow(this, "触摸事件来源", R.array.touch_sources, config.touchSource) {
                     config = config.copy(touchSource = it); save()
                 },
@@ -584,7 +657,7 @@ class SettingsActivity : Activity() {
             )
         )
 
-        box.addView(Ui.sectionLabel(this, "调色板 · 深色主题"))
+        box.addView(Ui.sectionLabel(this, "调色板 · 深色主题").also { darkPaletteLabel = it })
         box.addView(
             Ui.group(
                 this,
@@ -595,7 +668,7 @@ class SettingsActivity : Activity() {
             )
         )
 
-        box.addView(Ui.sectionLabel(this, "调色板 · 浅色主题"))
+        box.addView(Ui.sectionLabel(this, "调色板 · 浅色主题").also { lightPaletteLabel = it })
         box.addView(
             Ui.group(
                 this,
@@ -618,6 +691,7 @@ class SettingsActivity : Activity() {
             recreate()
         })
         box.addView(Ui.body(this, "预览区与录屏覆盖层使用同一套 EffectEngine / Choreographer / SurfaceView，所见即录屏所得。"))
+        updateThemeUi()
         return scroll
     }
 
@@ -686,11 +760,134 @@ class SettingsActivity : Activity() {
         return scroll
     }
 
+    // ---------------- 深浅色 ----------------
+
+    /** 当前实际生效的是不是深色调色板（强制深/浅色优先，否则跟随系统实时判定） */
+    private fun effectiveDark(): Boolean = config.isDark(NightMode.isDark(this))
+
+    /**
+     * 右上角主题按钮：点一次按「跟随系统 → 强制深色 → 强制浅色」循环。
+     * 图标直接反映当前档位（半明半暗圆 / 月牙 / 太阳），一眼看出现在是什么模式。
+     */
+    private fun buildThemeButton(): ImageView {
+        val btn = ImageView(this).apply {
+            isClickable = true
+            isFocusable = true
+            background = Ui.cardBg(this@SettingsActivity, Ui.CARD, 23f)
+            elevation = dip(8f).toFloat()
+            setPadding(dip(11f), dip(11f), dip(11f), dip(11f))
+            setOnClickListener { cycleThemeMode() }
+        }
+        themeButton = btn
+        updateThemeButtonIcon()
+        return btn
+    }
+
+    private fun cycleThemeMode() {
+        // 过渡进行中再点会叠出多层遮罩，直接忽略
+        if (themeTransitioning) return
+        themeTransitioning = true
+        val next = when (config.themeMode) {
+            Config.THEME_FOLLOW_SYSTEM -> Config.THEME_DARK
+            Config.THEME_DARK -> Config.THEME_LIGHT
+            else -> Config.THEME_FOLLOW_SYSTEM
+        }
+        NightMode.invalidate()
+        config = config.copy(themeMode = next)
+        save()
+
+        // 先给当前界面拍一张快照：重建后新实例把它铺在上面慢慢淡出，
+        // 视觉上就是一整屏颜色平滑过渡到新主题。
+        ThemeTransition.pending = captureWindow()
+        recreate()
+        @Suppress("DEPRECATION")
+        overridePendingTransition(0, 0)
+    }
+
+    /** 把当前窗口画成一张位图（旧主题的界面快照） */
+    private fun captureWindow(): Bitmap? = runCatching {
+        val v = window.decorView
+        if (v.width <= 0 || v.height <= 0) return null
+        Bitmap.createBitmap(v.width, v.height, Bitmap.Config.ARGB_8888).also { bmp ->
+            v.draw(Canvas(bmp))
+        }
+    }.getOrNull()
+
+    /** 新实例启动后：旧界面快照淡出，露出已经换成新主题的界面 */
+    private fun playThemeFade(snapshot: Bitmap) {
+        val host = window.decorView as? ViewGroup ?: run { snapshot.recycle(); return }
+        val overlay = ImageView(this).apply {
+            setImageBitmap(snapshot)
+            scaleType = ImageView.ScaleType.FIT_XY
+            isClickable = false
+            isFocusable = false
+        }
+        host.addView(overlay, ViewGroup.LayoutParams(Ui.MATCH, Ui.MATCH))
+        overlay.animate()
+            .alpha(0f)
+            .setDuration(360)
+            .setInterpolator(DecelerateInterpolator())
+            .withEndAction {
+                (overlay.parent as? ViewGroup)?.removeView(overlay)
+                snapshot.recycle()
+            }
+            .start()
+    }
+
+    private fun updateThemeButtonIcon() {
+        val res = when (config.themeMode) {
+            Config.THEME_DARK -> R.drawable.ic_theme_dark
+            Config.THEME_LIGHT -> R.drawable.ic_theme_light
+            else -> R.drawable.ic_theme_auto
+        }
+        themeButton?.let {
+            it.setImageResource(res)
+            it.setColorFilter(Ui.TEXT)
+            it.contentDescription = when (config.themeMode) {
+                Config.THEME_DARK -> "主题：强制深色"
+                Config.THEME_LIGHT -> "主题：强制浅色"
+                else -> "主题：跟随系统"
+            }
+        }
+    }
+
+    /** 两套调色板标题上的「当前生效」标记跟着判定结果走 */
+    private fun updateThemeUi() {
+        if (!::config.isInitialized) return
+        val dark = effectiveDark()
+        updateThemeButtonIcon()
+        darkPaletteLabel?.text =
+            if (dark) "调色板 · 深色主题（当前生效）" else "调色板 · 深色主题"
+        lightPaletteLabel?.text =
+            if (dark) "调色板 · 浅色主题" else "调色板 · 浅色主题（当前生效）"
+    }
+
+    /**
+     * 系统深浅色切换。
+     *
+     * 正常情况下 uiMode 变化会让 Activity 重建、这里不会回调；但部分 ROM 会直接
+     * 改配置而不重建，补一个兜底，保证预览和按钮文案立刻跟着变。
+     */
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        NightMode.invalidate()
+        if (!::config.isInitialized) return
+        // 深浅色变了就整套重建（资源主题、所有控件颜色都已固化在 View 上）；
+        // 其余配置变化（字号、旋转等）只刷新预览即可。
+        if (config.isDark(NightMode.isDark(this)) != Ui.isDark) {
+            recreate()
+            return
+        }
+        if (::preview.isInitialized) preview.applyConfig(config)
+        updateThemeUi()
+    }
+
     // ---------------- 行为 ----------------
 
     private fun save() {
         Prefs.write(this, config)
-        preview.applyConfig(config, resources.configuration.uiMode)
+        preview.applyConfig(config)
+        updateThemeUi()
         // 首页 / 特效页两份「全局生效」开关保持一致（静默，不弹确认框）
         globalRows.forEach { Ui.syncSwitch(it, config.globalEffect) }
         syncGlobalReceiver()
@@ -790,44 +987,57 @@ class SettingsActivity : Activity() {
             val needsGrant = PrivilegedShell.shizukuNeedsGrant()
             runOnUiThread {
                 if (isFinishing || isDestroyed) return@runOnUiThread
-                when (backend) {
-                    PrivilegedShell.Backend.SHIZUKU -> {
+                when {
+                    needsGrant -> {
+                        AlertDialog.Builder(this)
+                            .setTitle("需要授权")
+                            .setMessage("Shizuku 正在运行，但还没有授权给 MYclick。授权后即可读取触摸事件。")
+                            .setPositiveButton("授权") { _, _ ->
+                                PrivilegedShell.requestShizukuPermission()
+                            }
+                            .setNegativeButton("稍后", null)
+                            .show()
+                    }
+                    backend == PrivilegedShell.Backend.SHIZUKU -> {
                         ShellFxHost.sync(this, config)
                         toast("Shizuku 模式已启动：$desc")
                     }
-                    PrivilegedShell.Backend.ROOT -> {
-                        // 没有 Shizuku 但有 root：直接走 su
+                    backend == PrivilegedShell.Backend.ROOT -> {
+                        // 没有运行中的 Shizuku 但有 root：直接走 su
                         ShellFxHost.sync(this, config)
                         toast("已通过 Root 启动触摸监听")
                     }
-                    PrivilegedShell.Backend.NONE -> {
-                        if (needsGrant) {
-                            AlertDialog.Builder(this)
-                                .setTitle("需要授权")
-                                .setMessage("Shizuku 正在运行，但还没有授权给 MYclick。授权后即可读取触摸事件。")
-                                .setPositiveButton("授权") { _, _ ->
-                                    PrivilegedShell.requestShizukuPermission()
-                                }
-                                .setNegativeButton("稍后", null)
-                                .show()
-                        } else {
-                            AlertDialog.Builder(this)
-                                .setTitle("还不能用")
-                                .setMessage(
-                                    "Shizuku 模式需要 Shizuku 或 root。\n\n" +
-                                        "· 已装 Shizuku：打开它，用「无线调试」或「root」启动服务，" +
-                                        "然后回到这里重新打开开关\n" +
-                                        "· 没装 Shizuku：装好后按上面步骤激活\n\n" +
-                                        "如果不想折腾，可以关掉这个开关，改用「纯悬浮窗模式」（无障碍）。"
-                                )
-                                .setPositiveButton("打开 Shizuku") { _, _ -> openShizuku() }
-                                .setNegativeButton("知道了", null)
-                                .show()
-                        }
+                    else -> {
+                        AlertDialog.Builder(this)
+                            .setTitle("还不能用")
+                            .setMessage(
+                                "Shizuku 模式需要 Shizuku 或 root。\n\n" +
+                                    "· 已装 Shizuku：打开它，用「无线调试」或「root」启动服务，" +
+                                    "然后回到这里重新打开开关\n" +
+                                    "· 没装 Shizuku：装好后按上面步骤激活\n\n" +
+                                    "如果不想折腾，可以关掉这个开关，改用「纯悬浮窗模式」（无障碍）。"
+                            )
+                            .setPositiveButton("打开 Shizuku") { _, _ -> openShizuku() }
+                            .setNegativeButton("知道了", null)
+                            .show()
                     }
                 }
             }
         }.start()
+    }
+
+    /**
+     * Shizuku 只有在应用实际发起 requestPermission() 后，才会把应用登记到授权列表。
+     * 设备有 root 时旧流程会静默走 root，导致 Shizuku 里一直看不到 MYclick。
+     */
+    private fun requestShizukuPermissionIfNeeded(): Boolean {
+        if (shizukuPermissionPrompted) return false
+        if (!::config.isInitialized || !config.enabled || !config.shizukuMode) return false
+        if (!PrivilegedShell.shizukuNeedsGrant()) return false
+        shizukuPermissionPrompted = true
+        val requested = PrivilegedShell.requestShizukuPermission()
+        if (!requested) shizukuPermissionPrompted = false
+        return requested
     }
 
     private fun openShizuku() {
@@ -894,8 +1104,8 @@ class SettingsActivity : Activity() {
     }
 
     private fun versionName(): String = runCatching {
-        packageManager.getPackageInfo(packageName, 0).versionName ?: "1.0.12"
-    }.getOrDefault("1.0.12")
+        packageManager.getPackageInfo(packageName, 0).versionName ?: "1.0.25"
+    }.getOrDefault("1.0.25")
 
     private fun toast(text: String) {
         android.widget.Toast.makeText(this, text, android.widget.Toast.LENGTH_SHORT).show()

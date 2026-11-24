@@ -37,17 +37,17 @@ class EffectEngine {
         val palette: Palette
     ) {
         companion object {
-            fun from(config: Config, uiMode: Int) = RenderConfig(
+            fun from(config: Config, systemDark: Boolean) = RenderConfig(
                 scale = config.scale.coerceIn(0.2f, 6f),
                 speed = config.speed.coerceIn(0.25f, 4f),
-                dark = config.isDark(uiMode),
-                palette = config.palette(config.isDark(uiMode))
+                dark = config.isDark(systemDark),
+                palette = config.palette(config.isDark(systemDark))
             )
         }
     }
 
     @Volatile
-    var render: RenderConfig = RenderConfig.from(Config.default(), 0)
+    var render: RenderConfig = RenderConfig.from(Config.default(), false)
         private set
 
     private val random = Random(System.nanoTime())
@@ -64,8 +64,8 @@ class EffectEngine {
     private val sparkPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
     private val triangle = Path()
 
-    fun update(config: Config, uiMode: Int) {
-        render = RenderConfig.from(config, uiMode)
+    fun update(config: Config, systemDark: Boolean) {
+        render = RenderConfig.from(config, systemDark)
     }
 
     val hasActive: Boolean get() = rippleCount > 0 || sparkCount > 0

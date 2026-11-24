@@ -90,9 +90,10 @@ object PrivilegedShell {
         else -> "不可用（需要 Shizuku 或 root）"
     }
 
-    fun requestShizukuPermission(requestCode: Int = 4201) {
-        runCatching { Shizuku.requestPermission(requestCode) }
-    }
+    fun requestShizukuPermission(requestCode: Int = 4201): Boolean = runCatching {
+        Shizuku.requestPermission(requestCode)
+        true
+    }.getOrDefault(false)
 
     /** 以 shell / root 身份启动进程；命令用数组传递，不经 shell 拼接 */
     fun open(context: Context?, vararg cmd: String): Handle? {

@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 深色主题下的强调色，与 Ui.ACCENT 保持一致 -->
+    <color name="mc_accent">#FFF9A86C</color>
+</resources>

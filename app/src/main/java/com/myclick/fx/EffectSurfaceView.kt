@@ -9,6 +9,7 @@ import android.view.Choreographer
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import com.myclick.core.Config
+import com.myclick.core.NightMode
 import kotlin.math.min
 import kotlin.math.roundToInt
 
@@ -31,6 +32,9 @@ class EffectSurfaceView(
     private val holderCallback = holder
     private val choreographer: Choreographer by lazy { Choreographer.getInstance() }
 
+    /** 最近一次下发的配置；深浅色在每次点击时重新判定，见 [updatePalette] */
+    private var config: Config = Config.default()
+
     @Volatile
     private var running = false
     private var surfaceReady = false
@@ -50,16 +54,29 @@ class EffectSurfaceView(
         alpha = 1f
     }
 
-    fun applyConfig(config: Config, uiMode: Int) {
-        engine.update(config, uiMode)
-        speed = engine.render.speed
+    fun applyConfig(config: Config) {
+        this.config = config
+        NightMode.invalidate()
+        updatePalette()
         dprCapEnabled = config.dprCapEnabled
         post { applyFixedSize() }
+    }
+
+    /**
+     * 深/浅调色板按「此刻」的系统主题重新判定。
+     *
+     * 配置只在用户改设置时下发，而系统深浅色随时可能切换；把判定放在每次点击，
+     * 切换主题后下一次点击就是新配色，不必等下一次配置推送。
+     */
+    private fun updatePalette() {
+        engine.update(config, NightMode.isDark(context))
+        speed = engine.render.speed
     }
 
     /** xDp / yDp 已是 dp 坐标（由 OverlayController 从 MotionEvent.rawX/density 换算） */
     fun emit(xDp: Float, yDp: Float) {
         post {
+            updatePalette()
             engine.spawn(xDp, yDp)
             if (!running) startLoop()
         }

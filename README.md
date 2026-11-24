@@ -4,7 +4,7 @@
 
 **把 ColorOS / 一加「屏幕录制」里那个朴素的白色圆点，<br/>换成会扩散、会旋转、会迸出火花的点击特效**
 
-[![Release](https://img.shields.io/badge/Release-v1.0.12-F9A86C?style=flat-square)](https://github.com/mingyu0401/MYclick/releases)
+[![Release](https://img.shields.io/badge/Release-v1.0.40-F9A86C?style=flat-square)](https://github.com/mingyu0401/MYclick/releases)
 [![Platform](https://img.shields.io/badge/Platform-Android%2012%2B-3DDC84?style=flat-square)](#-兼容性)
 [![Framework](https://img.shields.io/badge/Framework-LSPosed-647589?style=flat-square)](#-快速开始)
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.2.0-7F52FF?style=flat-square)](#-从源码构建)
@@ -77,12 +77,12 @@
 
 | 渠道 | 文件 |
 | --- | --- |
-| **GitHub Releases**（推荐） | [MYclick-1.0.12-release.apk](https://github.com/mingyu0401/MYclick/releases/latest) |
-| 仓库内直链 | [download/MYclick-1.0.12-release.apk](https://github.com/mingyu0401/MYclick/raw/main/download/MYclick-1.0.12-release.apk) |
+| **GitHub Releases**（推荐） | [MYclick-1.0.40-release.apk](https://github.com/mingyu0401/MYclick/releases/latest) |
+| 仓库内直链 | [download/MYclick-1.0.40-release.apk](https://github.com/mingyu0401/MYclick/raw/main/download/MYclick-1.0.40-release.apk) |
 
 > **测试与日常使用统一使用 release 包**（复用 debug 签名，可直接覆盖安装）。
-> 当前版本 **v1.0.12**；v1.0.0 / v1.0.1 / v1.0.2 保留为历史 Release。
-> SHA-256：`83c078b9902ae1ab32a9a74b73ce60426e7b74346f091e57f5d311e1b5c18766`
+> 当前版本 **v1.0.40**；v1.0.0 / v1.0.1 / v1.0.2 保留为历史 Release。
+> SHA-256：`afdf71795244a7d22b01e083771a8eae57dbe46de7ac238d6b53c469eb7293ba`
 
 ---
 
@@ -92,7 +92,7 @@
 <summary><b>① 安装</b></summary>
 
 ```bash
-adb install -r download/MYclick-1.0.12-release.apk
+adb install -r download/MYclick-1.0.40-release.apk
 adb shell pm list packages -s | grep -i screenrecord   # 确认录屏包名
 ```
 
@@ -148,7 +148,7 @@ ColorOS 会过滤普通 App 的 `android.util.Log`，**优先看 LSPosed 管理�
 | 页 | 内容 |
 | --- | --- |
 | **首页** | 版本主卡、Root / LSPosed 状态双卡、设备信息、常用开关（含「全局生效」）、一键推送配置 |
-| **特效** | 实时预览（点一下就出特效）、SCALE / 速度 / 主题 / 触摸来源 / 全局生效、深浅两套调色板 |
+| **特效** | 实时预览（点一下就出特效）、SCALE / 速度 / 触摸来源 / 全局生效、深浅两套调色板 |
 | **关于** | 效果示意图、目标包名（自动识别）与重新探测、工具与仓库链接、排障速查 |
 
 <div align="center">
@@ -208,7 +208,7 @@ export ANDROID_HOME=/path/to/Android/Sdk     # Windows 可写 local.properties
 | --- | --- | --- |
 | 启用特效 | 开 | 热路径实时读取，改后不必重启 |
 | SCALE / 动画速度 | 1.0 / 1.0 | 范围 0.5~3.0 / 0.3~3.0 |
-| 主题 | 跟随系统 | 可强制深色 / 浅色 |
+| 主题 | 跟随系统 | 三个页面右上角一个图标按钮，点一次循环「跟随系统 → 强制深色 → 强制浅色」，图标同步变化；判定以系统下发的 `Configuration.uiMode` 为准（ColorOS 的 `mNightModeLocked` 会让 `UiModeManager.getNightMode()` 失真），shell 绘制进程向 AMS 取全局配置，同样实时生效；切换时重建前后用旧界面快照做交叉淡化，整屏颜色平滑过渡 |
 | 触摸事件来源 | 自动 | 自动 / 仅系统框架 / 仅应用作用域 / 仅录屏进程本地 |
 | **全局生效** | **关** | 默认只在录屏时显示；打开后**不录屏也出特效**，由 system_server 里的覆盖层直接绘制，不依赖录屏 App 进程是否在运行。⚠️ 全局显示可能会厌烦，慎重打开（开启前二次确认）。旧版「显示时机 → 始终显示」自动迁移到此开关 |
 | 隐藏原生圆点 / DPR 上限 2x | 开 / 开 | 钳 `show_touches=0`；关闭 DPR 上限按真实 density 渲染 |
@@ -266,6 +266,8 @@ ColorOS 对普通后台进程几秒就回收，没有前台服务的话「开好
 | 对齐 | 红色十字标记比对，特效中心与点击点重合，约 154px 的 Y 偏移已消除 |
 | 设置页 UI 回归 | 2026-11-12 装上 `download/` 里的 release 包逐页截图：三页布局正常、示意图完整显示；修掉 Android 15+ 强制 edge-to-edge 导致的状态栏文字重叠、底部内容从导航下透出；实时预览抽帧可见扩散圆、双段光弧、4 个三角火花 |
 | release 包录屏回归 | 同日 ColorOS 原生录屏 **105s / 1317 帧**（HEVC 1080×2354），全程非黑（桌面段 122/156/157、深色页 40/35/30）；4 次点击全部中继成功（`sink=true`、`active=true`），抽帧可见扩散圆、双段淡蓝光弧、4 个三角火花；`dumpsys window` 仍只有 `displayId=0` 一个 `MYclick-FX` |
+| v1.0.39 Shizuku 模式特效入镜 | 用户反馈 Shizuku 模式录屏里没有特效、Root 模式有。`dumpsys SurfaceFlinger` 显示录屏 / 投屏虚拟屏只镜像主屏 `DisplayContent` 那棵树（`Display 10000 → Display 0(MirrorRoot) → (Mirroring) Display 0`）；Root 模式是 WMS 窗口，本来就在树里，而 Shizuku 模式的特效图层直接挂在 SurfaceFlinger 的 `ROOT` 下，和 `Display 0` 平级，不在镜像范围。改为：全部槽位挂到同一个父图层 `MYclick-ShellFx`，识别到录屏虚拟屏后用 `SurfaceControl.mirrorSurface` 镜像这个父图层，再挂到建在录屏屏幕图层栈上的容器 `MYclick-ShellFx-capture-<stack>` 下（镜像图层默认离屏，不挂父图层不会合成 —— 1.0.38 正是漏了这步）。以 `shell` 身份（uid 2000）强制镜像到投屏虚拟屏实测：镜像出现在图层树的根上且可达。Root 模式代码未改动 |
+| v1.0.40 录屏特效对齐 | 1.0.39 录屏里有了特效，但位置整体偏向右下：录屏画面里系统触摸点在 (540,1410)、对应特效在 (640,1650)，比例约 1.18 = 1272/1080。ColorOS 录屏虚拟屏是 1080×2354，系统镜像主屏时给 MirrorRoot 加了「等比缩放 + 居中」，特效镜像没有。改为对特效镜像套用同一变换：`scale = min(录屏宽/主屏宽, 录屏高/主屏高)`，按缩放后尺寸居中；录屏尺寸与主屏当前方向尺寸一起轮询，旋转后自动重算。用户实测：录屏里的特效与屏幕上的点击位置一致 |
 | v1.0.1 UI 回归 | 装上 `MYclick-1.0.1-release.apk`（versionCode 2）逐页截图：版本号 1.0.1、主卡图标与启动图标一致、底栏文字垂直居中；录屏抽帧确认高亮胶囊质心 `48 → 105 → 162` **连续过渡**（非瞬移），页面淡入淡出生效；目标包名自动识别为本机真实安装的 `com.oplus.screenrecorder` |
 | 全局生效默认值 | 覆盖安装后冷启动设置页，root 读取模块 SP 确认 `globalEffect=false`（默认关闭）、`gateMode=0` |
 | 全局生效修复回归 | 2026-11-12：ColorOS 会拦截 system_server 发往普通 App 静态接收器的广播（框架侧 `global sent` 有、App 侧 `recv` 为 0），改为**在 system_server 同进程挂载覆盖层**、ACTION_DOWN 经 TouchBus 直连。软重启后日志 `[android] 全局生效宿主已挂载`，三次点击均有 `global direct` + `overlay onTouch globalHost=true attached=true`；窗口由 `uid=1000 / package=android` 持有；**非录屏状态**短录屏抽帧可见白 → 淡蓝双段光弧 |
@@ -313,7 +315,7 @@ MYclick/
 │   └── src/main/
 │       ├── AndroidManifest.xml     # xposedmodule / xposedminversion=93 / xposedscope
 │       ├── assets/xposed_init      # com.myclick.HookEntry
-│       ├── res/                    # 深色主题、导航图标、效果示意图
+│       ├── res/                    # 深浅双主题（values / values-night）、导航图标、效果示意图
 │       └── java/com/myclick/
 │           ├── HookEntry.kt                 # LSPosed 入口，运行时动态判定作用域
 │           ├── bridge/                     # HookBridge / XposedBridgeImpl

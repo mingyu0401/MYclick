@@ -4,7 +4,6 @@ import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import android.os.Process
-import com.myclick.core.Config
 import java.io.BufferedReader
 import java.io.InputStreamReader
 
@@ -29,10 +28,6 @@ object ShellFxMain {
     @JvmStatic
     fun main(args: Array<String>) {
         Looper.prepareMainLooper()
-        // 渲染节拍跑在 main looper 上：提到 DISPLAY 优先级（-4），
-        // 否则会被同进程里读触摸 / 轮询录屏的普通线程抢占，表现为偶发掉帧。
-        // shell / root 身份才有 CAP_SYS_NICE，普通环境下设置失败也不影响功能。
-        runCatching { Process.setThreadPriority(Process.THREAD_PRIORITY_DISPLAY) }
         // 解 hidden API 限制（SurfaceControl 的 setLayerStack / setMatrix 都是 @hide）。
         // 放到独立线程：万一 VMRuntime 那边卡住，也不能拖住主流程起图层。
         Thread({ HiddenApi.unlock() }, "fx-hiddenapi").apply {
@@ -48,24 +43,41 @@ object ShellFxMain {
         }
         initAppSharedMemory()
 
-        val uiMode = context.resources.configuration.uiMode
+        val nativeLibrary = args.firstOrNull { it.startsWith("lib=") }?.removePrefix("lib=")
+        if (nativeLibrary.isNullOrBlank() || !NativeTouchMonitor.load(nativeLibrary)) {
+            println("FX ERR native touch library unavailable path=$nativeLibrary")
+            return
+        }
         val renderer = ShellFxRenderer(context)
-        val recorder = ShellRecorderState(context) { on -> handler.post { renderer.setRecording(on) } }
+        val recorder = ShellRecorderState(
+            context,
+            onState = { on -> handler.post { renderer.setRecording(on) } },
+            onCaptureTargets = { targets -> handler.post { renderer.setCaptureTargets(targets) } }
+        )
         // 触摸源也跑在这里：App 进程被 ColorOS 回收后特效仍要继续工作
-        val touch = ShellTouchSource(context) { x, y -> handler.post { renderer.emit(x, y) } }
+        val touch = ShellTouchSource(context) { x, y ->
+            handler.post { renderer.emit(x, y) }
+        }
         touch.start()
         ShellPidFile.write()
 
-        // 可选启动参数：pkg=<录屏包名> cfg=<配置行>，方便 adb 手工调试
+        // 可选启动参数：pkg=<录屏包名> cfg=<配置行>，方便 adb 手工调试；
+        // capture=<layerStack> 不等录屏、直接把特效镜像到指定虚拟屏（排查录屏镜像用）
         args.forEach { arg ->
             when {
                 arg.startsWith("pkg=") -> recorder.start(arg.removePrefix("pkg="))
                 arg.startsWith("cfg=") -> ShellFxProto.decodeConfig(arg.removePrefix("cfg="))
-                    ?.let { renderer.applyConfig(it, uiMode) }
+                    ?.let { renderer.applyConfig(it) }
+                // 调试用：尺寸填 0 表示不缩放（与主屏同尺寸的虚拟屏）
+                arg.startsWith("capture=") -> arg.removePrefix("capture=").toIntOrNull()
+                    ?.let { stack ->
+                        val target = ShellRecorderState.CaptureTarget(stack, 0, 0, 0, 0)
+                        handler.post { renderer.setCaptureTargets(setOf(target)) }
+                    }
             }
         }
 
-        Thread({ stdinLoop(handler, renderer, recorder, uiMode) }, "fx-stdin").apply {
+        Thread({ stdinLoop(handler, renderer, recorder) }, "fx-stdin").apply {
             isDaemon = true
             start()
         }
@@ -76,8 +88,7 @@ object ShellFxMain {
     private fun stdinLoop(
         handler: Handler,
         renderer: ShellFxRenderer,
-        recorder: ShellRecorderState,
-        uiMode: Int
+        recorder: ShellRecorderState
     ) {
         var lines = 0
         try {
@@ -85,7 +96,7 @@ object ShellFxMain {
                 while (true) {
                     val line = reader.readLine() ?: break
                     lines++
-                    if (!dispatch(handler, renderer, recorder, uiMode, line)) break
+                    if (!dispatch(handler, renderer, recorder, line)) break
                 }
             }
         } catch (t: Throwable) {
@@ -103,7 +114,6 @@ object ShellFxMain {
         handler: Handler,
         renderer: ShellFxRenderer,
         recorder: ShellRecorderState,
-        uiMode: Int,
         raw: String
     ): Boolean {
         val line = raw.trim()
@@ -116,14 +126,13 @@ object ShellFxMain {
             }
             return false
         }
-
         when {
             line.startsWith("cfg ") -> {
                 val cfg = ShellFxProto.decodeConfig(line.substring(4))
                 if (cfg == null) {
                     println("FX bad cfg: $line")
                 } else {
-                    handler.post { renderer.applyConfig(cfg, uiMode) }
+                    handler.post { renderer.applyConfig(cfg) }
                 }
             }
             line.startsWith("pkg ") -> recorder.start(line.substring(4))

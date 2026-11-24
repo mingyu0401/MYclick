@@ -1,6 +1,5 @@
 package com.myclick.core
 
-import android.content.res.Configuration
 import android.os.Bundle
 
 /**
@@ -114,10 +113,16 @@ data class Config(
         putString("nonce", nonce)
     }
 
-    fun isDark(uiMode: Int): Boolean = when (themeMode) {
+    /**
+     * 是否使用深色调色板。
+     *
+     * [systemDark] 由 [NightMode.isDark] 实时解析后传进来 —— 不要再传进程启动时
+     * 缓存的 `uiMode`：shell 子进程收不到配置变更，那样「跟随系统」会永远停在启动时的值。
+     */
+    fun isDark(systemDark: Boolean): Boolean = when (themeMode) {
         THEME_DARK -> true
         THEME_LIGHT -> false
-        else -> (uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+        else -> systemDark
     }
 
     /**

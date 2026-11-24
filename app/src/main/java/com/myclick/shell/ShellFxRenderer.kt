@@ -1,5 +1,6 @@
 package com.myclick.shell
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
@@ -15,7 +16,9 @@ import android.view.Surface
 import android.view.SurfaceControl
 import android.view.WindowManager
 import com.myclick.core.Config
+import com.myclick.core.NightMode
 import com.myclick.fx.EffectEngine
+import kotlin.math.min
 import kotlin.math.roundToInt
 
 /**
@@ -44,7 +47,7 @@ import kotlin.math.roundToInt
  * 坐标系：每个 slot 的 buffer 是屏幕物理像素的一块矩形，canvas 按 density 缩放，
  * 于是绘制单位仍是 dp，和 App 内 [com.myclick.fx.EffectSurfaceView] 完全一致。
  */
-class ShellFxRenderer(context: Context) {
+class ShellFxRenderer(private val context: Context) {
 
     private val handler = Handler(Looper.getMainLooper())
     private val displayManager = context.getSystemService(DisplayManager::class.java)
@@ -76,12 +79,29 @@ class ShellFxRenderer(context: Context) {
 
     private val slots = Array(SLOT_COUNT) { Slot(it) }
 
+    /**
+     * 所有槽位的父容器，挂在主屏 layerStack 上。
+     *
+     * 槽位不再各自做 root 图层：录屏虚拟屏在 SurfaceFlinger 里只镜像主屏的
+     * `DisplayContent` 那棵树（`MirrorRoot → Display 0`），游离在 ROOT 下的图层
+     * 不在其中，于是 Shizuku 模式的特效屏幕上看得见、录屏里却没有（Root 模式
+     * 走的是 WMS 窗口，本来就在那棵树里，所以录得到）。
+     * 有了统一的父容器，就能用 [SurfaceControl] 的 mirror 一次性把全部槽位
+     * 镜像到录屏虚拟屏上，见 [setCaptureStacks]。
+     */
+    private var root: SurfaceControl? = null
+
+    /** 录屏虚拟屏 layerStack → 挂在那块屏上的镜像图层 */
+    private val mirrors = HashMap<Int, CaptureMirror>()
+
     private var screenW = 0
     private var screenH = 0
     private var density = 1f
 
     private var config: Config = Config.default()
-    private var uiMode = 0
+
+    /** 上一次画出来的深浅色，用来在日志里记一次切换（排查「跟随系统」是否生效） */
+    private var lastDark: Boolean? = null
 
     /** 是否正在录屏（由 [ShellRecorderState] 写入） */
     @Volatile
@@ -91,6 +111,7 @@ class ShellFxRenderer(context: Context) {
     private var lastFrameNanos = 0L
     private var speed = 1f
     private var frameCount = 0
+    private var inputModeLogged = false
 
     /**
      * 下一帧的触发时刻（`SystemClock.uptimeMillis()` 基准，用 Double 累加）。
@@ -107,10 +128,9 @@ class ShellFxRenderer(context: Context) {
     /**
      * 实际使用的节拍周期，从 [basePeriodMs] 起，按实测能力自动降级。
      *
-     * 面板可能报 120Hz，但 shell 身份创建的 root 图层**不参与系统的帧率投票**
-     * （`setFrameRate(..., CHANGE_FRAME_RATE_ALWAYS)` 调用成功但 SurfaceFlinger
-     * 仍然把 renderRate 停在 55~60Hz）。这时如果还按 8.33ms 排帧，每两帧就有一帧
-     * 被合成器丢掉，加上 `lockCanvas` 要等两个 vsync，画面反而更抖。
+     * 面板可能报 120Hz，但 shell 身份创建的 root 图层不一定参与系统的帧率投票。
+     * 这里不向 SurfaceFlinger 请求切换刷新率，避免一次点击影响前台页面的显示节奏；
+     * 动画只按自身节拍提交小图层。
      */
     private var framePeriodMs = 1000.0 / 60.0
 
@@ -131,11 +151,14 @@ class ShellFxRenderer(context: Context) {
 
     // ---------------- 对外入口（都必须跑在主线程） ----------------
 
-    fun applyConfig(cfg: Config, uMode: Int) {
+    fun applyConfig(cfg: Config) {
         config = cfg
-        uiMode = uMode
-        speed = EffectEngine.RenderConfig.from(cfg, uMode).speed
-        for (s in slots) s.engine.update(cfg, uMode)
+        // 深浅色在每次点击时重新解析：shell 进程收不到系统的配置变更广播，
+        // 在这里缓存 uiMode 会让「跟随系统」永远停在进程启动时的值。
+        NightMode.invalidate()
+        val dark = NightMode.isDark(context)
+        speed = EffectEngine.RenderConfig.from(cfg, dark).speed
+        for (s in slots) s.engine.update(cfg, dark)
         if (!cfg.enabled) {
             clearAll()
             hideIdle()
@@ -173,7 +196,12 @@ class ShellFxRenderer(context: Context) {
             println("FX tap dropped: no layer")
             return
         }
-        slot.engine.update(config, uiMode)
+        val dark = NightMode.isDark(context)
+        if (dark != lastDark) {
+            lastDark = dark
+            println("FX theme: ${if (dark) "dark" else "light"}（themeMode=${config.themeMode}）")
+        }
+        slot.engine.update(config, dark)
         val d = density.coerceAtLeast(0.5f)
         slot.engine.spawn(xPx / d, yPx / d)
         slot.active = true
@@ -195,6 +223,183 @@ class ShellFxRenderer(context: Context) {
         for (s in slots) {
             s.engine.clear()
             releaseSlot(s)
+        }
+        setCaptureTargets(emptySet())
+        runCatching { root?.release() }
+        root = null
+    }
+
+    /**
+     * 把特效镜像到录屏虚拟屏上（由 [ShellRecorderState] 在录制开始 / 结束、
+     * 主屏旋转时调用）。
+     *
+     * 镜像图层是 SurfaceFlinger 侧对 [root] 整棵子树的实时克隆：槽位的显示、位置、
+     * 每一帧 buffer 都会同步过去，绘制端不用多画一遍。只放在录屏那块虚拟屏的
+     * layerStack 上，不影响投屏等其它虚拟屏，也不改主屏上的任何显示。
+     */
+    fun setCaptureTargets(targets: Set<ShellRecorderState.CaptureTarget>) {
+        val wanted = targets.associateBy { it.layerStack }
+        val stale = mirrors.keys - wanted.keys
+        for (stack in stale) {
+            val m = mirrors.remove(stack) ?: continue
+            runCatching { newTxn().setVisibility(m.holder, false).apply() }
+            runCatching { m.mirror.release() }
+            runCatching { m.holder.release() }
+            println("FX mirror off stack=$stack")
+        }
+        for ((stack, target) in wanted) {
+            val existing = mirrors[stack]
+            if (existing != null) {
+                if (existing.target != target) {
+                    // 主屏旋转 / 录屏尺寸变化：镜像不用重建，只重算缩放
+                    val tx = newTxn()
+                    applyMirrorTransform(tx, existing.mirror, target)
+                    tx.apply()
+                    existing.target = target
+                }
+                continue
+            }
+            val parent = ensureRoot() ?: return
+            val m = buildMirror(parent, target) ?: continue
+            mirrors[stack] = m
+            println("FX mirror on stack=$stack ${target.width}x${target.height} <- ${target.srcWidth}x${target.srcHeight}")
+        }
+    }
+
+    private class CaptureMirror(
+        val holder: SurfaceControl,
+        val mirror: SurfaceControl,
+        var target: ShellRecorderState.CaptureTarget
+    )
+
+    /**
+     * 让镜像在录屏画面里和系统镜像的主屏内容严丝合缝。
+     *
+     * 录屏虚拟屏的尺寸通常和主屏不同（ColorOS 录屏是 1080×2354，主屏 1272×2772）。
+     * 系统镜像主屏内容时，会给它的 MirrorRoot 加「等比缩放 + 居中」：
+     * `scale = min(录屏宽/主屏宽, 录屏高/主屏高)`，再把缩放后的画面居中放进录屏画面。
+     * 特效镜像必须套用同一个变换，否则特效坐标仍按主屏像素算，会整体偏向右下
+     * （1.0.39 实测偏移约 1272/1080 ≈ 1.18 倍，靠边的还会被裁掉）。
+     */
+    private fun applyMirrorTransform(
+        tx: SurfaceControl.Transaction,
+        mirror: SurfaceControl,
+        t: ShellRecorderState.CaptureTarget
+    ) {
+        if (t.width <= 0 || t.height <= 0 || t.srcWidth <= 0 || t.srcHeight <= 0) {
+            setMatrix(tx, mirror, 1f)
+            tx.setPosition(mirror, 0f, 0f)
+            return
+        }
+        val scale = min(t.width.toFloat() / t.srcWidth, t.height.toFloat() / t.srcHeight)
+        val scaledW = (t.srcWidth * scale).roundToInt()
+        val scaledH = (t.srcHeight * scale).roundToInt()
+        val dx = ((t.width - scaledW) / 2).toFloat()
+        val dy = ((t.height - scaledH) / 2).toFloat()
+        setMatrix(tx, mirror, scale)
+        tx.setPosition(mirror, dx, dy)
+    }
+
+    /**
+     * `Transaction.setMatrix(SurfaceControl, dsdx, dtdx, dtdy, dsdy)` 是 @hide；
+     * 系统镜像主屏时用的就是它。只在 shell 进程执行，入口已解 hidden API 限制。
+     */
+    @SuppressLint("BlockedPrivateApi")
+    private fun setMatrix(tx: SurfaceControl.Transaction, c: SurfaceControl, scale: Float) {
+        val f = Float::class.javaPrimitiveType
+        runCatching {
+            SurfaceControl.Transaction::class.java
+                .getMethod("setMatrix", SurfaceControl::class.java, f, f, f, f)
+                .invoke(tx, c, scale, 0f, 0f, scale)
+        }.onFailure { println("FX mirror setMatrix failed: $it") }
+    }
+
+    /**
+     * 在 [stack] 上建一个容器，再把 [parent] 的镜像挂到容器下面。
+     *
+     * 不能直接给镜像图层设 layerStack：SurfaceFlinger 建镜像时不会把它挂到图层树的
+     * 根上（`addToRoot = false`，系统放大镜也是建完镜像再 reparent 到自己的图层下），
+     * 不挂父图层就一直处于离屏状态、永远不参与合成 —— 1.0.38 录不到特效就是这个原因。
+     * 容器是我们自己用 Builder 建的普通 root 图层，会正常加到根上。
+     */
+    private fun buildMirror(parent: SurfaceControl, target: ShellRecorderState.CaptureTarget): CaptureMirror? {
+        val stack = target.layerStack
+        val holder = try {
+            val b = SurfaceControl.Builder().setName("$LAYER_NAME-capture-$stack")
+            runCatching { SurfaceControl.Builder::class.java.getMethod("setContainerLayer").invoke(b) }
+            b.build()
+        } catch (t: Throwable) {
+            println("FX capture holder failed stack=$stack: $t")
+            return null
+        }
+        val mirror = mirrorOf(parent)
+        if (mirror == null) {
+            println("FX mirror unavailable, effects won't reach recording on stack=$stack")
+            runCatching { holder.release() }
+            return null
+        }
+        val tx = newTxn()
+            .setLayer(holder, LAYER_Z)
+            .setVisibility(holder, true)
+            .reparent(mirror, holder)
+            .setVisibility(mirror, true)
+        applyMirrorTransform(tx, mirror, target)
+        if (!setLayerStack(tx, holder, stack)) {
+            println("FX mirror setLayerStack failed stack=$stack")
+            runCatching { tx.close() }
+            runCatching { mirror.release() }
+            runCatching { holder.release() }
+            return null
+        }
+        tx.apply()
+        return CaptureMirror(holder, mirror, target)
+    }
+
+    /**
+     * `SurfaceControl.mirrorSurface(SurfaceControl)` 是 @hide 静态方法。
+     *
+     * lint 的 BlockedPrivateApi 针对的是 App 进程；这段只在 shell 身份的
+     * app_process 里执行，进程入口已经用 [HiddenApi.unlock] 解除了限制。
+     */
+    @SuppressLint("BlockedPrivateApi")
+    private fun mirrorOf(target: SurfaceControl): SurfaceControl? = runCatching {
+        SurfaceControl::class.java
+            .getMethod("mirrorSurface", SurfaceControl::class.java)
+            .invoke(null, target) as? SurfaceControl
+    }.recoverCatching {
+        SurfaceControl::class.java
+            .getDeclaredMethod("mirrorSurface", SurfaceControl::class.java)
+            .apply { isAccessible = true }
+            .invoke(null, target) as? SurfaceControl
+    }.onFailure { println("FX mirrorSurface failed: $it") }.getOrNull()
+
+    /** setLayerStack 是 @hide，反射调用（进程入口已解 hidden API 限制） */
+    private fun setLayerStack(tx: SurfaceControl.Transaction, c: SurfaceControl, stack: Int): Boolean =
+        runCatching {
+            SurfaceControl.Transaction::class.java
+                .getMethod("setLayerStack", SurfaceControl::class.java, Int::class.javaPrimitiveType)
+                .invoke(tx, c, stack)
+        }.isSuccess
+
+    /** 槽位的父容器：没有 buffer、只负责层级，常驻可见（显隐由各槽位自己控制） */
+    private fun ensureRoot(): SurfaceControl? {
+        root?.let { return it }
+        return try {
+            val b = SurfaceControl.Builder().setName(LAYER_NAME)
+            // @hide；拿不到就是普通无 buffer 图层，作父容器同样可用
+            runCatching { SurfaceControl.Builder::class.java.getMethod("setContainerLayer").invoke(b) }
+            val c = b.build()
+            val tx = newTxn()
+                .setLayer(c, LAYER_Z)
+                .setVisibility(c, true)
+            setLayerStack(tx, c, Display.DEFAULT_DISPLAY)
+            markTrustedOverlay(tx, c)
+            tx.apply()
+            root = c
+            c
+        } catch (t: Throwable) {
+            println("FX build root failed: $t")
+            null
         }
     }
 
@@ -288,65 +493,27 @@ class ShellFxRenderer(context: Context) {
 
     private fun buildLayer(slot: Slot, size: Int): Boolean {
         try {
-            val c = SurfaceControl.Builder()
+            val parent = ensureRoot()
+            val builder = SurfaceControl.Builder()
                 .setName("$LAYER_NAME-${slot.id}")
                 .setBufferSize(size, size)
                 .setFormat(PixelFormat.TRANSLUCENT)
-                .build()
+            if (parent != null) builder.setParent(parent)
+            val c = builder.build()
             val s = Surface(c)
             val tx = newTxn()
-                .setLayer(c, LAYER_Z + slot.id)
                 .setVisibility(c, false)
                 .setPosition(c, 0f, 0f)
-            // setLayerStack 是 @hide，反射调用（进程入口已解 hidden API 限制）
-            runCatching {
-                SurfaceControl.Transaction::class.java
-                    .getMethod("setLayerStack", SurfaceControl::class.java, Int::class.javaPrimitiveType)
-                    .invoke(tx, c, Display.DEFAULT_DISPLAY)
+            if (parent != null) {
+                // 挂在容器下：z 只需在容器内部排序，layerStack 跟随容器
+                tx.setLayer(c, slot.id)
+            } else {
+                // 容器建不出来时退回旧做法：每个槽位自己做主屏上的 root 图层
+                tx.setLayer(c, LAYER_Z + slot.id)
+                setLayerStack(tx, c, Display.DEFAULT_DISPLAY)
             }
-            // 告诉 SurfaceFlinger「这个图层要按面板刷新率走」。
-            // 不设的话它把 root 图层当静态内容，只在有别的动画时才提频，本图层
-            // 每帧 unlockCanvasAndPost 都要等一次 buffer 归还（实测 8ms），
-            // 结果只能跑出 60fps。设成 FIXED_SOURCE 后合成器会按固定帧率安排。
-            val rateHz = (1000.0 / framePeriodMs).toFloat()
-            // 四参版本带「换帧率策略」：ALWAYS 才会让合成器真的为这个图层跑面板刷新率。
-            // 只给三参（ONLY_IF_SEAMLESS）时，静态内容下 display 仍停在 60Hz，
-            // 每帧 lockCanvas 要等两个 vsync，实测只能拿到 62fps。
-            runCatching {
-                SurfaceControl.Transaction::class.java
-                    .getMethod(
-                        "setFrameRate",
-                        SurfaceControl::class.java,
-                        Float::class.javaPrimitiveType,
-                        Int::class.javaPrimitiveType,
-                        Int::class.javaPrimitiveType
-                    )
-                    .invoke(
-                        tx, c, rateHz,
-                        FRAME_RATE_COMPATIBILITY_FIXED_SOURCE,
-                        CHANGE_FRAME_RATE_ALWAYS
-                    )
-            }.onFailure { e1 ->
-                println("FX setFrameRate(4arg) fail: $e1")
-                runCatching {
-                    SurfaceControl.Transaction::class.java
-                        .getMethod(
-                            "setFrameRate",
-                            SurfaceControl::class.java,
-                            Float::class.javaPrimitiveType,
-                            Int::class.javaPrimitiveType
-                        )
-                        .invoke(tx, c, rateHz, FRAME_RATE_COMPATIBILITY_FIXED_SOURCE)
-                }.onFailure { println("FX setFrameRate(3arg) fail: $it") }
-            }
+            markTrustedOverlay(tx, c)
             tx.apply()
-            runCatching {
-                s.setFrameRate(
-                    rateHz,
-                    Surface.FRAME_RATE_COMPATIBILITY_FIXED_SOURCE,
-                    Surface.CHANGE_FRAME_RATE_ALWAYS
-                )
-            }.onFailure { println("FX Surface.setFrameRate fail: $it") }
             slot.control = c
             slot.surface = s
             slot.size = size
@@ -359,6 +526,49 @@ class ShellFxRenderer(context: Context) {
         } catch (t: Throwable) {
             println("FX build layer failed: $t")
             return false
+        }
+    }
+
+    /**
+     * 把特效图层标记为「受信任覆盖层」。
+     *
+     * 图层本身没有输入通道（SurfaceFlinger 给它的 InputWindowHandle 是
+     * `NO_INPUT_CHANNEL`，touchableRegion 也是空的），所以它不是触摸目标；
+     * 但 Android 12 起的「阻止不可信触摸」策略仍会把不同 UID 的可见覆盖层
+     * 当作不可信遮挡：手指落在特效范围内时，InputDispatcher 会把整段手势
+     * 丢掉，表现就是单点后 0.5 秒内同位置滑不动、必须重新抬手。
+     *
+     * 参考小白录屏的做法，用 `SurfaceControl.Transaction#setTrustedOverlay`
+     * 声明这是信任的装饰层，让触摸直接落到下面的 App。只影响输入归属，
+     * 不改变图层的显示层级与绘制内容。
+     */
+    private fun markTrustedOverlay(tx: SurfaceControl.Transaction, c: SurfaceControl) {
+        val result = runCatching {
+            SurfaceControl.Transaction::class.java
+                .getMethod(
+                    "setTrustedOverlay",
+                    SurfaceControl::class.java,
+                    Boolean::class.javaPrimitiveType
+                )
+                .invoke(tx, c, true)
+        }.recoverCatching {
+            // 某些 OEM 把该方法从 public 降成 declared，兜底再找一次。
+            SurfaceControl.Transaction::class.java
+                .getDeclaredMethod(
+                    "setTrustedOverlay",
+                    SurfaceControl::class.java,
+                    Boolean::class.javaPrimitiveType
+                )
+                .apply { isAccessible = true }
+                .invoke(tx, c, true)
+        }
+        if (!inputModeLogged) {
+            inputModeLogged = true
+            if (result.isSuccess) {
+                println("FX input: effect layer marked trusted overlay")
+            } else {
+                println("FX input: setTrustedOverlay failed: ${result.exceptionOrNull()}")
+            }
         }
     }
 
@@ -552,10 +762,5 @@ class ShellFxRenderer(context: Context) {
         /** postAtTime 的 token，用于 removeCallbacks */
         val FRAME_TOKEN = Any()
 
-        /** Surface.FRAME_RATE_COMPATIBILITY_FIXED_SOURCE */
-        const val FRAME_RATE_COMPATIBILITY_FIXED_SOURCE = 1
-
-        /** Surface.CHANGE_FRAME_RATE_ALWAYS：强制要求按目标帧率合成 */
-        const val CHANGE_FRAME_RATE_ALWAYS = 1
     }
 }

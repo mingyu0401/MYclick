@@ -113,7 +113,8 @@ object ShellFxHost {
             "/system/bin/app_process",
             "-Djava.class.path=$apk",
             "/system/bin",
-            MAIN_CLASS
+            MAIN_CLASS,
+            "lib=${nativeLibraryPath(context)}"
         )
         val h = PrivilegedShell.open(context, *cmd)
         if (h == null) {
@@ -159,7 +160,9 @@ object ShellFxHost {
         Trace.log(context, "host", "清理残留绘制进程 pid=$pid")
         PrivilegedShell.exec(context, "/system/bin/kill", pid.toString())
         Thread.sleep(250)
-        // 绘制进程被强杀时，它拉起的 getevent 会变成孤儿继续占着触摸屏，顺手清掉
+        // 旧版本绘制进程会拉起 getevent；新版本直接读 evdev。两种残留都只清理
+        // MYclick 自己的绘制进程，避免误杀其它录屏/调试工具的触摸监听。
+        runCatching { PrivilegedShell.exec(context, "/system/bin/pkill", "-f", "com.myclick.shell.ShellFxMain") }
         runCatching { PrivilegedShell.exec(context, "/system/bin/pkill", "-f", "getevent -lt") }
     }
 
@@ -175,6 +178,11 @@ object ShellFxHost {
             "配置已下发 scale=${cfg.scale} speed=${cfg.speed} theme=${cfg.themeMode} " +
                 "global=${cfg.globalEffect} pkg=${cfg.targetPackage}"
         )
+    }
+
+    private fun nativeLibraryPath(context: Context): String {
+        val dir = context.applicationInfo.nativeLibraryDir
+        return "$dir/libmyclick_touch.so"
     }
 
     private fun drain(h: PrivilegedShell.Handle) {

@@ -22,23 +22,42 @@ import android.widget.TextView
 internal fun Context.dip(v: Float): Int = (v * resources.displayMetrics.density + 0.5f).toInt()
 
 /**
- * 一套纯 framework 控件的深色卡片式设计语言，视觉参照 ONextBox：
- * 纯黑底、大标题、石板蓝主卡、双列状态卡、#1A1A1A 分组卡、底部胶囊导航。
+ * 一套纯 framework 控件的卡片式设计语言，视觉参照 ONextBox：
+ * 大标题、石板蓝主卡、分组卡、底部胶囊导航；深 / 浅两套配色。
+ *
+ * 所有颜色都是 getter：Activity 构建界面之前先调用 [applyTheme]，
+ * 同一套组件代码就能在系统深浅色切换后取到对应的一套颜色。
  * 不引入 AndroidX / Material，保持模块 APK 零运行时依赖。
  */
 object Ui {
 
-    val BG: Int = Color.parseColor("#000000")
-    val CARD: Int = Color.parseColor("#1A1A1A")
-    val CARD_SOFT: Int = Color.parseColor("#141414")
-    val HERO: Int = Color.parseColor("#647589")
-    val HERO_END: Int = Color.parseColor("#4E5D70")
-    val DIVIDER: Int = Color.parseColor("#2E2E2E")
-    val TEXT: Int = Color.parseColor("#F2F2F2")
-    val SUB: Int = Color.parseColor("#9B9B9B")
-    val ACCENT: Int = Color.parseColor("#F9A86C")
-    val NAV: Int = Color.parseColor("#292929")
-    val CHIP: Int = Color.parseColor("#2A2A2A")
+    @Volatile
+    private var darkTheme = true
+
+    val isDark: Boolean get() = darkTheme
+
+    fun applyTheme(dark: Boolean) {
+        darkTheme = dark
+    }
+
+    private fun pick(dark: Int, light: Int): Int = if (darkTheme) dark else light
+
+    val BG: Int get() = pick(0xFF000000.toInt(), 0xFFF4F5F7.toInt())
+    val CARD: Int get() = pick(0xFF1A1A1A.toInt(), 0xFFFFFFFF.toInt())
+    val CARD_SOFT: Int get() = pick(0xFF141414.toInt(), 0xFFECEEF1.toInt())
+    val HERO: Int get() = pick(0xFF647589.toInt(), 0xFF7C8FA6.toInt())
+    val HERO_END: Int get() = pick(0xFF4E5D70.toInt(), 0xFF64778F.toInt())
+    val DIVIDER: Int get() = pick(0xFF2E2E2E.toInt(), 0xFFE3E6EA.toInt())
+    val TEXT: Int get() = pick(0xFFF2F2F2.toInt(), 0xFF15171A.toInt())
+    val SUB: Int get() = pick(0xFF9B9B9B.toInt(), 0xFF6A6F78.toInt())
+    val ACCENT: Int get() = pick(0xFFF9A86C.toInt(), 0xFFE07A3F.toInt())
+    val NAV: Int get() = pick(0xFF292929.toInt(), 0xFFFFFFFF.toInt())
+    val NAV_PILL: Int get() = pick(0xFF3B3B3B.toInt(), 0xFFE9ECF0.toInt())
+    val CHIP: Int get() = pick(0xFF2A2A2A.toInt(), 0xFFEDEFF2.toInt())
+    val RIPPLE: Int get() = pick(0x22FFFFFF, 0x16000000)
+    val SWITCH_OFF: Int get() = pick(0xFF8A8A8A.toInt(), 0xFFB9BEC6.toInt())
+    val SWITCH_TRACK_OFF: Int get() = pick(0x33FFFFFF, 0x22000000)
+    val SWITCH_TRACK_ON: Int get() = pick(0x66F9A86C, 0x66E07A3F)
 
     const val MATCH = LinearLayout.LayoutParams.MATCH_PARENT
     const val WRAP = LinearLayout.LayoutParams.WRAP_CONTENT
@@ -54,7 +73,7 @@ object Ui {
     ).apply { cornerRadius = ctx.dip(26f).toFloat() }
 
     private fun ripple(ctx: Context): RippleDrawable = RippleDrawable(
-        ColorStateList.valueOf(Color.parseColor("#22FFFFFF")),
+        ColorStateList.valueOf(RIPPLE),
         null,
         GradientDrawable().apply {
             setColor(Color.WHITE)
@@ -204,11 +223,11 @@ object Ui {
             isChecked = checked
             thumbTintList = ColorStateList(
                 arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
-                intArrayOf(ACCENT, Color.parseColor("#8A8A8A"))
+                intArrayOf(ACCENT, SWITCH_OFF)
             )
             trackTintList = ColorStateList(
                 arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
-                intArrayOf(Color.parseColor("#66F9A86C"), Color.parseColor("#33FFFFFF"))
+                intArrayOf(SWITCH_TRACK_ON, SWITCH_TRACK_OFF)
             )
         }
         val listener = CompoundButton.OnCheckedChangeListener { _, c ->
@@ -297,6 +316,9 @@ object Ui {
     /**
      * 用 AlertDialog 单选代替原生 Spinner：外观可控、不会在初始化时误触发回调，
      * 也避免 DayNight 主题下 Spinner 弹窗文字变黑的问题。
+     *
+     * 值只放在右侧胶囊里（不再重复一行副标题）：选项长的时候胶囊自身换行，
+     * 并把宽度压到半屏以内，避免把左边的标题挤成两行。
      */
     fun choiceRow(
         ctx: Context,
@@ -311,31 +333,38 @@ object Ui {
         val chip = TextView(ctx).apply {
             text = "${items[selected]}  ⌄"
             textSize = 13f
+            maxLines = 2
             setTextColor(TEXT)
             gravity = Gravity.CENTER
             background = cardBg(ctx, CHIP, 12f)
             setPadding(ctx.dip(12f), ctx.dip(8f), ctx.dip(12f), ctx.dip(8f))
+            maxWidth = (ctx.resources.displayMetrics.widthPixels * 0.52f).toInt()
+            layoutParams = LinearLayout.LayoutParams(WRAP, WRAP).apply { marginStart = ctx.dip(12f) }
         }
-        return LinearLayout(ctx).apply {
+        fun render(index: Int) {
+            selected = index.coerceIn(0, items.size - 1)
+            chip.text = "${items[selected]}  ⌄"
+        }
+        val view = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             background = ripple(ctx)
             isClickable = true
             isFocusable = true
             setPadding(ctx.dip(20f), ctx.dip(12f), ctx.dip(20f), ctx.dip(12f))
-            addView(LinearLayout(ctx).apply {
-                orientation = LinearLayout.VERTICAL
+            addView(TextView(ctx).apply {
+                text = label
+                textSize = 17f
+                setTextColor(TEXT)
+                setTypeface(typeface, Typeface.BOLD)
                 layoutParams = LinearLayout.LayoutParams(0, WRAP, 1f)
-                addView(rowTitle(ctx, label))
-                addView(rowSub(ctx, items[selected].toString()))
             })
             addView(chip)
             setOnClickListener {
                 AlertDialog.Builder(ctx)
                     .setTitle(label)
                     .setSingleChoiceItems(items, selected) { dialog, which ->
-                        selected = which
-                        chip.text = "${items[which]}  ⌄"
+                        render(which)
                         onSelect(which)
                         dialog.dismiss()
                     }
@@ -343,6 +372,7 @@ object Ui {
                     .show()
             }
         }
+        return view
     }
 
     fun colorRow(

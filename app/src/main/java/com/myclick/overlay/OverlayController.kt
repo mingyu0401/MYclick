@@ -194,10 +194,8 @@ class OverlayController(
             // 长截图 / 滚动期间这些无谓任务会堆在 system_server 主线程上。
             if (cfg != appliedConfig) {
                 appliedConfig = cfg
-                forEachHost { host ->
-                    val uiMode = host.context.resources.configuration.uiMode
-                    host.view.applyConfig(cfg, uiMode)
-                }
+                // 深浅色不用在这里判定：EffectSurfaceView 每次点击都会实时解析系统主题
+                forEachHost { host -> host.view.applyConfig(cfg) }
             }
             reconcile()
         }
@@ -273,10 +271,7 @@ class OverlayController(
 
     /** 主线程内执行；幂等，重复调用只会刷新配置，不会重复 addView */
     private fun attach(cfg: Config) {
-        forEachHost { host ->
-            val uiMode = host.context.resources.configuration.uiMode
-            host.view.applyConfig(cfg, uiMode)
-        }
+        forEachHost { host -> host.view.applyConfig(cfg) }
         if (attached) return
         try {
             val displays = displayManager?.displays ?: emptyArray()
@@ -305,8 +300,7 @@ class OverlayController(
         @Suppress("DEPRECATION")
         display.getRealMetrics(metrics)
         val view = EffectSurfaceView(displayCtx, metrics.density)
-        val uiMode = displayCtx.resources.configuration.uiMode
-        view.applyConfig(cfg, uiMode)
+        view.applyConfig(cfg)
 
         val lp = WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
@@ -352,7 +346,7 @@ class OverlayController(
         // 全局模式下录屏进程不再挂任何宿主（含 DecorView 兜底），绘制权在 system_server
         if (cfg.globalEffect || cfg.gateMode == Config.GATE_ALWAYS) return
         val view = EffectSurfaceView(decor.context, metrics.density)
-        view.applyConfig(cfg, decor.context.resources.configuration.uiMode)
+        view.applyConfig(cfg)
         try {
             decor.addView(view, ViewGroup.LayoutParams(MATCH_PARENT, MATCH_PARENT))
             decorHosts.put(id, DisplayHost(id, decor.context, null, view, metrics.density, null))
