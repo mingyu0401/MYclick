@@ -30,5 +30,13 @@
         <item>仅录屏进程本地（调试用）</item>
     </string-array>
 
+    <!-- 与 SettingsActivity 中 fxFpsValues 顺序一致：0 = 自动（跟随面板刷新率） -->
+    <string-array name="fx_fps" translatable="false">
+        <item>自动（跟随屏幕刷新率）</item>
+        <item>60 fps</item>
+        <item>90 fps</item>
+        <item>120 fps</item>
+    </string-array>
+
     <!-- 「显示时机」下拉已由设置页的「全局生效」开关取代（Config.gateMode 仅保留旧配置兼容） -->
 </resources>

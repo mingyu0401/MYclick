@@ -10,6 +10,7 @@ data class Config(
     val enabled: Boolean = true,
     val scale: Float = 1.0f,                 // SCALE，默认 1.0
     val speed: Float = 1.0f,                 // 动画速度倍率
+    val fxFps: Int = FPS_AUTO,               // 特效渲染帧率：自动（面板刷新率）/ 60 / 90 / 120
     val themeMode: Int = THEME_FOLLOW_SYSTEM,
     val touchSource: Int = SOURCE_AUTO,
     val gateMode: Int = GATE_AUTO,
@@ -57,6 +58,9 @@ data class Config(
         const val GATE_AUTO = 0
         const val GATE_ALWAYS = 1
 
+        /** 特效帧率：0 = 跟随面板刷新率，其余为固定目标 */
+        const val FPS_AUTO = 0
+
         /** LSPosed 模式：系统框架 Hook 取坐标，录屏进程里挂悬浮窗绘制 */
         const val RUN_LSPOSED = 0
 
@@ -89,6 +93,7 @@ data class Config(
                 enabled = b.getBoolean("enabled", d.enabled),
                 scale = b.getFloat("scale", d.scale),
                 speed = b.getFloat("speed", d.speed),
+                fxFps = b.getInt("fxFps", d.fxFps),
                 themeMode = b.getInt("themeMode", d.themeMode),
                 touchSource = b.getInt("touchSource", d.touchSource),
                 gateMode = b.getInt("gateMode", d.gateMode),
@@ -116,6 +121,7 @@ data class Config(
         putBoolean("enabled", enabled)
         putFloat("scale", scale)
         putFloat("speed", speed)
+        putInt("fxFps", fxFps)
         putInt("themeMode", themeMode)
         putInt("touchSource", touchSource)
         putInt("gateMode", gateMode)

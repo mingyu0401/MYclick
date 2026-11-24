@@ -168,6 +168,7 @@ object ConfigStore {
                 enabled = bool("enabled", d.enabled),
                 scale = flt("scale", d.scale),
                 speed = flt("speed", d.speed),
+                fxFps = int("fxFps", d.fxFps),
                 themeMode = int("themeMode", d.themeMode),
                 touchSource = int("touchSource", d.touchSource),
                 gateMode = int("gateMode", d.gateMode),

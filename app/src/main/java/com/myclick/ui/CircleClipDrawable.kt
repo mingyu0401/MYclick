@@ -18,7 +18,7 @@ import kotlin.math.min
  * —— 切主题时表现为「MYclick 右边的图标闪一下方框」。这里改成 draw() 里每帧自己裁，
  * 与布局/outline 的时机无关。
  *
- * 另外支持 [setHolding]：圆形裁切固定不动，只让内部图形绕圆心旋转。
+ * 另外支持 [setHolding] 和 [tap]：圆形裁切固定不动，只让内部图形绕圆心旋转。
  */
 internal class CircleClipDrawable(private val inner: Drawable) : Drawable() {
 
@@ -26,7 +26,8 @@ internal class CircleClipDrawable(private val inner: Drawable) : Drawable() {
 
     private var angle = 0f        // 当前旋转角（度）
     private var speed = 0f        // 当前角速度（度/秒）
-    private var holding = false   // 按住中：向最高速加速；否则向 0 减速
+    private var holding = false   // 长按中：向最高速加速；否则向 0 减速
+    private var tapUntil = 0L     // 点击后短暂视为按住的截止时刻
     private var spinning = false  // 逐帧回调是否在跑
     private var lastFrame = 0L
 
@@ -35,12 +36,13 @@ internal class CircleClipDrawable(private val inner: Drawable) : Drawable() {
         val dt = min(now - lastFrame, MAX_STEP_MS) / 1000f
         lastFrame = now
         // 指数逼近目标速度：按住时逐渐加速，松手后逐渐减速，两段都没有突变
-        val target = if (holding) MAX_SPEED else 0f
-        val tau = if (holding) SPEED_UP_TAU_S else SLOW_DOWN_TAU_S
+        val pressed = holding || now < tapUntil
+        val target = if (pressed) MAX_SPEED else 0f
+        val tau = if (pressed) SPEED_UP_TAU_S else SLOW_DOWN_TAU_S
         speed += (target - speed) * (1f - exp(-dt / tau))
         angle = (angle + speed * dt) % 360f
         invalidateSelf()
-        if (holding || speed > MIN_SPEED) {
+        if (pressed || speed > MIN_SPEED) {
             scheduleSelf(frame, now)
         } else {
             speed = 0f
@@ -65,11 +67,20 @@ internal class CircleClipDrawable(private val inner: Drawable) : Drawable() {
     /** 长按期间传 true 开始加速；松手传 false，之后缓慢减速直至停下 */
     fun setHolding(on: Boolean) {
         holding = on
-        if (on && !spinning) {
-            spinning = true
-            lastFrame = SystemClock.uptimeMillis()
-            scheduleSelf(frame, lastFrame)
-        }
+        if (on) startFrames()
+    }
+
+    /** 点击：按住约 [TAP_HOLD_MS] 的效果，之后同样缓慢减速直至停下 */
+    fun tap() {
+        tapUntil = SystemClock.uptimeMillis() + TAP_HOLD_MS
+        startFrames()
+    }
+
+    private fun startFrames() {
+        if (spinning) return
+        spinning = true
+        lastFrame = SystemClock.uptimeMillis()
+        scheduleSelf(frame, lastFrame)
     }
 
     override fun onBoundsChange(bounds: Rect) {
@@ -91,6 +102,7 @@ internal class CircleClipDrawable(private val inner: Drawable) : Drawable() {
         const val MAX_SPEED = 900f          // 按住时的最高角速度（约 2.5 圈/秒）
         const val SPEED_UP_TAU_S = 0.6f     // 加速时间常数：约 1.5 秒接近最高速
         const val SLOW_DOWN_TAU_S = 1f      // 减速时间常数：松手后约 7 秒慢慢停下
+        const val TAP_HOLD_MS = 300L        // 点击时视为按住的时长
         const val MIN_SPEED = 1f            // 低于此角速度视为停止
         const val MAX_STEP_MS = 50L         // 单帧最长积分步长，防止切后台再回来时跳角度
     }

@@ -14,10 +14,14 @@ import android.graphics.Bitmap
  */
 internal object ThemeTransition {
 
+    /** 圆形过渡与主题按钮渐变共用的时长，节奏与网页版一致 */
+    const val DURATION_MS = 480L
+
     /**
      * @param cx / [cy] 主题按钮圆心（窗口坐标）
      * @param startRadius 圆的起始半径，也就是按钮的半径
      * @param toDark 新主题是否为深色
+     * @param fromCard / [fromText] 旧主题下按钮底色、图标色，新按钮从它们渐变过去
      */
     class Reveal(
         val snapshot: Bitmap,
@@ -25,6 +29,8 @@ internal object ThemeTransition {
         val cy: Float,
         val startRadius: Float,
         val toDark: Boolean,
+        val fromCard: Int,
+        val fromText: Int,
     )
 
     @Volatile

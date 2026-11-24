@@ -125,8 +125,11 @@ class ShellFxRenderer(private val context: Context) {
     /** 面板报告的理想节拍（1000/刷新率） */
     private var basePeriodMs = 1000.0 / 60.0
 
+    /** 用户选定的目标节拍：自动时等于面板节拍，手动时不快过面板（见 [resolvePeriod]） */
+    private var goalPeriodMs = 0.0
+
     /**
-     * 实际使用的节拍周期，从 [basePeriodMs] 起，按实测能力自动降级。
+     * 实际使用的节拍周期，从 [goalPeriodMs] 起，按实测能力自动降级。
      *
      * 面板可能报 120Hz，但 shell 身份创建的 root 图层不一定参与系统的帧率投票。
      * 这里不向 SurfaceFlinger 请求切换刷新率，避免一次点击影响前台页面的显示节奏；
@@ -158,6 +161,7 @@ class ShellFxRenderer(private val context: Context) {
         NightMode.invalidate()
         val dark = NightMode.isDark(context)
         speed = EffectEngine.RenderConfig.from(cfg, dark).speed
+        resolvePeriod()
         for (s in slots) s.engine.update(cfg, dark)
         if (!cfg.enabled) {
             clearAll()
@@ -422,12 +426,23 @@ class ShellFxRenderer(private val context: Context) {
         screenH = h
         density = metrics.density
         basePeriodMs = 1000.0 / displayRefreshRate()
-        // 直接从 60fps 起步，不用面板报的刷新率：root 图层这条通道实测拿不到 120fps，
-        // 按 8.33ms 排帧只会让每一帧都多等一个 vsync（实测 9.9ms/帧），
-        // 等于白白把 CPU 占住、还给滑动添堵。真跑不动的设备再由 calibratePeriod 往下调。
-        framePeriodMs = maxOf(basePeriodMs, 1000.0 / 60.0)
+        resolvePeriod()
         println("FX layout ${w}x$h d=$density panel=${"%.0f".format(1000.0 / basePeriodMs)}Hz")
         return true
+    }
+
+    /**
+     * 按用户选的特效帧率算目标节拍：自动（0）= 面板节拍；手动指定时不超过面板刷新率。
+     *
+     * root 图层这条通道实测可能拿不到满速（真机曾见 8.33ms 排帧实测 9.9ms/帧），
+     * 跑不动的设备由 calibratePeriod 在一轮之后往下调。只有目标变了才重置实际节拍，
+     * 避免每次配置刷新都把已经校准过的值冲掉。
+     */
+    private fun resolvePeriod() {
+        val goal = if (config.fxFps <= 0) basePeriodMs else maxOf(basePeriodMs, 1000.0 / config.fxFps)
+        if (goal == goalPeriodMs) return
+        goalPeriodMs = goal
+        framePeriodMs = goal
     }
 
     /** 面板刷新率，钳到 [50, 120]；动画节拍跟它对齐，避免每帧落在两次 vsync 之间 */
@@ -675,7 +690,7 @@ class ShellFxRenderer(private val context: Context) {
         val targetFps = 1000.0 / framePeriodMs
         if (actualFps >= targetFps * 0.9) return
         // 留 1.5% 余量：周期比实测略长一点点，才不会每隔几帧就错过一次 vsync
-        val next = (1000.0 / actualFps * 1.015).coerceAtLeast(basePeriodMs)
+        val next = (1000.0 / actualFps * 1.015).coerceAtLeast(goalPeriodMs)
         if (next > framePeriodMs + 0.2) {
             framePeriodMs = next
             println(

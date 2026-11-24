@@ -1,5 +1,6 @@
 package com.myclick.ui
 
+import android.animation.ArgbEvaluator
 import android.animation.ValueAnimator
 import android.app.Activity
 import android.app.AlertDialog
@@ -19,6 +20,7 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.view.Gravity
+import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
@@ -442,22 +444,19 @@ class SettingsActivity : Activity() {
             this,
             "LSPosed 模式",
             "需要 LSPosed",
-            "由系统框架 Hook 取点击坐标，在录屏 App 里绘制特效。" +
-                "需在 LSPosed 中勾选「系统框架」和录屏 App，重启手机后生效。"
+            "需在 LSPosed 中勾选「系统框架」和录屏 App。"
         ) { onModeCardClicked(Config.RUN_LSPOSED) }
         modeCards[Config.RUN_SHIZUKU] = Ui.optionCard(
             this,
             "Shizuku 模式",
             "免 root",
-            "由 Shizuku 启动独立绘制进程，直接读取触摸屏，点哪里特效就在哪里。" +
-                "需先在 Shizuku 里启动服务（手机重启后要重新启动）。"
+            "需要去lsp中勾选推荐的并软重启手机."
         ) { onModeCardClicked(Config.RUN_SHIZUKU) }
         modeCards[Config.RUN_ROOT] = Ui.optionCard(
             this,
             "Root 模式",
             "需要 root",
-            "用 su 直接启动同一个绘制进程，不需要 LSPosed，也不需要 Shizuku。" +
-                "需在 Magisk / KernelSU 等 root 管理器里允许 MYclick。"
+            "需在 Magisk / KernelSU 中允许 MYclick。"
         ) { onModeCardClicked(Config.RUN_ROOT) }
         modeCards.values.forEach { box.addView(it.view) }
         box.addView(Ui.body(this, "同一时间只会有一种方式在工作，切换后另外两种会自动停用，不会出现两份特效。"))
@@ -645,8 +644,12 @@ class SettingsActivity : Activity() {
             ImageView(this@SettingsActivity).apply {
                 setImageDrawable(icon)
                 scaleType = ImageView.ScaleType.FIT_CENTER
-                // 长按：内部图形加速旋转，松手后慢慢停下
+                // 点击或长按：内部图形加速旋转，松手后慢慢停下
                 isLongClickable = true
+                setOnClickListener {
+                    performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+                    icon.tap()
+                }
                 setOnLongClickListener { icon.setHolding(true); true }
                 setOnTouchListener { _, e ->
                     if (e.actionMasked == MotionEvent.ACTION_UP || e.actionMasked == MotionEvent.ACTION_CANCEL) {
@@ -720,10 +723,14 @@ class SettingsActivity : Activity() {
         })
 
         box.addView(Ui.sectionLabel(this, "基础参数"))
+        val fxFpsValues = listOf(Config.FPS_AUTO, 60, 90, 120)
         box.addView(
             Ui.group(
                 this,
-                Ui.switchRow(this, "启用特效", "关闭后所有 Hook 直接跳过", config.enabled) {
+                Ui.switchRow(this, "全局生效", "全局显示可能会厌烦，慎重打开", config.globalEffect) {
+                    config = config.copy(globalEffect = it); save()
+                }.also { globalRows += it },
+                Ui.switchRow(this, "仅在录屏时显示特效", "关闭后所有 Hook 直接跳过", config.enabled) {
                     config = config.copy(enabled = it); save()
                 },
                 Ui.seekRow(this, "SCALE 大小", "默认 1.0", config.scale, 5, 30) {
@@ -732,19 +739,12 @@ class SettingsActivity : Activity() {
                 Ui.seekRow(this, "动画速度", "1.0 = 60fps 原速", config.speed, 3, 30) {
                     config = config.copy(speed = it / 10f); save()
                 },
+                Ui.choiceRow(this, "特效帧率", R.array.fx_fps, fxFpsValues.indexOf(config.fxFps).coerceAtLeast(0)) {
+                    config = config.copy(fxFps = fxFpsValues[it]); save()
+                },
                 Ui.choiceRow(this, "触摸事件来源", R.array.touch_sources, config.touchSource) {
                     config = config.copy(touchSource = it); save()
                 },
-                Ui.switchRow(
-                    this,
-                    "全局生效",
-                    "全局显示可能会厌烦，慎重打开",
-                    config.globalEffect,
-                    confirmOnEnable = "开启后，即使没有在录屏，每次点击屏幕也会出现特效。" +
-                        "\n\n全局显示可能会厌烦，慎重打开。（默认仅录屏时显示）"
-                ) {
-                    config = config.copy(globalEffect = it); save()
-                }.also { globalRows += it },
                 Ui.switchRow(this, "隐藏系统原生触摸圆点", "把 show_touches 钳为 0", config.hideNativeDot) {
                     config = config.copy(hideNativeDot = it); save()
                 },
@@ -787,7 +787,6 @@ class SettingsActivity : Activity() {
             save()
             recreate()
         })
-        box.addView(Ui.body(this, "预览区与录屏覆盖层使用同一套 EffectEngine / Choreographer / SurfaceView，所见即录屏所得。"))
         updateThemeUi()
         return scroll
     }
@@ -814,8 +813,8 @@ class SettingsActivity : Activity() {
         box.addView(
             Ui.body(
                 this,
-                "效果示意：扩散填充圆 + 双旋转光弧 + 三角火花，以实际点击点为圆心；" +
-                    "橙色扩散圆、双段白 → 淡蓝光弧与四个三角火花都会被录进视频。"
+                "MYclick 是一款为安卓手机提供触摸位置特效提示的工具，让录屏时方便观看者更明显地看到点击了哪里。" +
+                    "同时专门为 ColorOS 系统提供仅录屏时生效的检测。"
             )
         )
 
@@ -843,14 +842,22 @@ class SettingsActivity : Activity() {
             )
         )
 
-        box.addView(Ui.sectionLabel(this, "排障速查"))
+        box.addView(Ui.sectionLabel(this, "各模式排障"))
         box.addView(
             Ui.group(
                 this,
-                Ui.infoRow(this, "完全没有特效", "多半只勾了录屏 App、没勾「系统框架」，或没重启").view,
-                Ui.infoRow(this, "录屏产物全黑 / 只有几帧", "覆盖层误加到 AUTO_MIRROR 虚拟屏；本版本已过滤虚拟屏").view,
-                Ui.infoRow(this, "特效位置偏移", "检查窗口 inset 补偿；当前用 getLocationOnScreen 对齐").view,
-                Ui.infoRow(this, "点击与特效不同步", "广播需显式 setPackage + FLAG_RECEIVER_FOREGROUND").view
+                Ui.infoRow(this, "LSPosed", "没有特效：确认「系统框架」和录屏 App 已勾选，然后重启手机").view,
+                Ui.infoRow(this, "Shizuku", "没有特效：确认 Shizuku 服务已启动；手机重启后需重新启动").view,
+                Ui.infoRow(this, "Root", "没有特效：确认已在 Magisk / KernelSU 中允许 MYclick").view
+            )
+        )
+        box.addView(Ui.sectionLabel(this, "App 后台保活"))
+        box.addView(
+            Ui.group(
+                this,
+                Ui.infoRow(this, "电池设置", "对 MYclick 选择「不限制」，并允许自启动与后台运行").view,
+                Ui.infoRow(this, "最近任务", "对 MYclick 下拉或上锁，防止被系统清理").view,
+                Ui.infoRow(this, "常驻通知", "请勿关闭，它是保持特效在后台运行的前台通知").view
             )
         )
         box.addView(Ui.body(this, "LSPosed 模块 · Xposed API 82 · Kotlin · 无第三方运行时依赖 · Apache-2.0"))
@@ -910,6 +917,8 @@ class SettingsActivity : Activity() {
         }
         // 先拍旧界面：save() 会刷新按钮图标和调色板标题，快照里要保留旧主题的样子
         val fromDark = Ui.isDark
+        val fromCard = Ui.CARD
+        val fromText = Ui.TEXT
         val snapshot = captureWindow()
         NightMode.invalidate()
         config = config.copy(themeMode = next)
@@ -925,6 +934,8 @@ class SettingsActivity : Activity() {
                 cy = loc[1] + anchor.height / 2f,
                 startRadius = anchor.width / 2f,
                 toDark = toDark,
+                fromCard = fromCard,
+                fromText = fromText,
             )
         } else {
             snapshot?.recycle()
@@ -949,6 +960,30 @@ class SettingsActivity : Activity() {
         ThemeRevealView(this, reveal).also {
             host.addView(it, ViewGroup.LayoutParams(Ui.MATCH, Ui.MATCH))
             it.play()
+        }
+        fadeThemeButtons(reveal)
+    }
+
+    /**
+     * 主题按钮的底色和图标色从旧主题渐变到新主题，时长与圆形过渡一致。
+     * 按钮正好在圆心，圆一开始就把它罩在里面，不渐变的话会在第一帧直接跳色。
+     */
+    private fun fadeThemeButtons(reveal: ThemeTransition.Reveal) {
+        val argb = ArgbEvaluator()
+        fun tint(f: Float) {
+            val card = argb.evaluate(f, reveal.fromCard, Ui.CARD) as Int
+            val text = argb.evaluate(f, reveal.fromText, Ui.TEXT) as Int
+            themeButtons.forEach {
+                (it.background as GradientDrawable).setColor(card)
+                it.setColorFilter(text)
+            }
+        }
+        tint(0f)
+        ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = ThemeTransition.DURATION_MS
+            interpolator = DecelerateInterpolator(1.5f)
+            addUpdateListener { tint(it.animatedFraction) }
+            start()
         }
     }
 

@@ -38,7 +38,8 @@ object ShellFxProto {
         append(cfg.lightFill).append(',')
         append(cfg.lightArcStart).append(',')
         append(cfg.lightArcEnd).append(',')
-        append(cfg.lightSpark)
+        append(cfg.lightSpark).append(',')
+        append(cfg.fxFps)
     }
 
     fun decodeConfig(payload: String): Config? {
@@ -63,7 +64,8 @@ object ShellFxProto {
             lightFill = i(11, d.lightFill),
             lightArcStart = i(12, d.lightArcStart),
             lightArcEnd = i(13, d.lightArcEnd),
-            lightSpark = i(14, d.lightSpark)
+            lightSpark = i(14, d.lightSpark),
+            fxFps = i(15, d.fxFps)
         )
     }
 }

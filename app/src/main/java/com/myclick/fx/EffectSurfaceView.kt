@@ -39,6 +39,10 @@ class EffectSurfaceView(
     private var running = false
     private var surfaceReady = false
     private var lastFrameNanos = 0L
+    /** 目标帧间隔：0 = 不节流（自动 / 目标不低于面板刷新率），由 [applyConfig] 按 fxFps 设定 */
+    private var frameIntervalNs = 0L
+    /** 固定排期的下一次推进时刻，避免 vsync 抖动把节拍越拖越慢 */
+    private var nextFrameAtNs = 0L
     private var dpr = 1f
     private var speed = 1f
     private var dprCapEnabled = true
@@ -59,6 +63,7 @@ class EffectSurfaceView(
         NightMode.invalidate()
         updatePalette()
         dprCapEnabled = config.dprCapEnabled
+        frameIntervalNs = if (config.fxFps > 0) 1_000_000_000L / config.fxFps else 0L
         post { applyFixedSize() }
     }
 
@@ -134,11 +139,20 @@ class EffectSurfaceView(
         if (running || !surfaceReady) return
         running = true
         lastFrameNanos = 0L
+        nextFrameAtNs = 0L
         choreographer.postFrameCallback(this)
     }
 
     override fun doFrame(frameTimeNanos: Long) {
         if (!running) return
+        if (frameIntervalNs > 0L) {
+            // 目标帧率低于面板时只在到点的 vsync 推进；容忍 10% 抖动，否则会在整帧之间来回摆
+            if (frameTimeNanos < nextFrameAtNs - frameIntervalNs / 10) {
+                choreographer.postFrameCallback(this)
+                return
+            }
+            nextFrameAtNs = maxOf(nextFrameAtNs + frameIntervalNs, frameTimeNanos)
+        }
         val dtMs = if (lastFrameNanos == 0L) {
             FRAME_MS
         } else {
