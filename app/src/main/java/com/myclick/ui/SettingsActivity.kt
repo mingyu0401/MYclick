@@ -28,10 +28,12 @@ import android.view.ViewOutlineProvider
 import android.view.WindowInsetsController
 import android.view.animation.DecelerateInterpolator
 import android.view.animation.OvershootInterpolator
+import android.widget.ArrayAdapter
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.ListView
 import android.widget.ScrollView
 import android.widget.TextView
 import com.myclick.R
@@ -806,7 +808,7 @@ class SettingsActivity : Activity() {
         extraEdit = extraRow.input
         box.addView(Ui.group(this, targetRow.view, extraRow.view))
         box.addView(Ui.secondaryButton(this, "探测本机录屏应用并选择") { detectTarget() })
-        box.addView(Ui.body(this, "非ColorOS不保证录屏检测和效果正常。"))
+        box.addView(Ui.body(this, "非ColorOS不保证录屏检测功能正常。"))
 
         box.addView(Ui.sectionLabel(this, "工具与链接"))
         box.addView(
@@ -1088,24 +1090,39 @@ class SettingsActivity : Activity() {
         }
     }
 
+    /** 搜索本机包名含关键字的应用（默认 screenrec），点选即设为目标。 */
     private fun detectTarget() {
-        val found = PackageDetector.detect(this)
-        if (found.isEmpty()) {
-            AlertDialog.Builder(this).setTitle("探测结果")
-                .setMessage("未在本机找到屏幕录制应用，可手动填写目标包名。")
-                .setPositiveButton("好", null).show()
-            return
+        val keyword = Ui.editRow(this, "搜索包名关键字", "screenrec")
+        val results = mutableListOf<String>()
+        val adapter = ArrayAdapter(this, android.R.layout.simple_list_item_1, results)
+        val list = ListView(this).apply { this.adapter = adapter }
+        fun search() {
+            val key = keyword.input.text.toString().trim()
+            results.clear()
+            results += PackageDetector.search(this, key)
+            adapter.notifyDataSetChanged()
+            if (results.isEmpty()) toast("未找到包名含「$key」的应用")
         }
-        val current = targetEdit.text.toString().trim()
-        AlertDialog.Builder(this)
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dip(8f), 0, dip(8f), 0)
+            addView(keyword.view)
+            addView(Ui.secondaryButton(this@SettingsActivity, "搜索") { search() })
+            addView(list, LinearLayout.LayoutParams(Ui.MATCH, dip(300f)))
+            addView(Ui.body(this@SettingsActivity, "非ColorOS不保证录屏检测功能正常。"))
+        }
+        val dialog = AlertDialog.Builder(this)
             .setTitle("选择目标录屏应用")
-            .setSingleChoiceItems(found.toTypedArray(), found.indexOf(current).coerceAtLeast(0)) { dialog, which ->
-                targetEdit.setText(found[which])
-                applyTargetFields()
-                dialog.dismiss()
-            }
+            .setView(box)
             .setNegativeButton("取消", null)
-            .show()
+            .create()
+        list.setOnItemClickListener { _, _, pos, _ ->
+            targetEdit.setText(results[pos])
+            applyTargetFields()
+            dialog.dismiss()
+        }
+        dialog.show()
+        search()
     }
 
 
