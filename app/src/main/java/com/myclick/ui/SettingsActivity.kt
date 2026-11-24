@@ -452,13 +452,13 @@ class SettingsActivity : Activity() {
             this,
             "LSPosed 模式",
             "需要 LSPosed",
-            "需在 LSPosed 中勾选「系统框架」和录屏 App。"
+            "需在 LSPosed 中勾选「系统框架」和录屏 App，勾选后软重启手机。"
         ) { onModeCardClicked(Config.RUN_LSPOSED) }
         modeCards[Config.RUN_SHIZUKU] = Ui.optionCard(
             this,
             "Shizuku 模式",
             "免 root",
-            "需要去lsp中勾选推荐的并软重启手机."
+            "需要 Shizuku 服务正在运行，未启动时点一次本卡片会引导你打开它。"
         ) { onModeCardClicked(Config.RUN_SHIZUKU) }
         modeCards[Config.RUN_ROOT] = Ui.optionCard(
             this,
@@ -1090,11 +1090,18 @@ class SettingsActivity : Activity() {
         }
     }
 
-    /** 搜索本机包名含关键字的应用（默认 screenrec），点选即设为目标。 */
+    /** 搜索本机包名含关键字的应用（默认 screenrecord），点选即设为目标。 */
     private fun detectTarget() {
-        val keyword = Ui.editRow(this, "搜索包名关键字", "screenrec")
+        val keyword = Ui.editRow(this, "搜索包名关键字", "screenrecord")
         val results = mutableListOf<String>()
-        val adapter = ArrayAdapter(this, android.R.layout.simple_list_item_1, results)
+        val adapter = object : ArrayAdapter<String>(this, android.R.layout.simple_list_item_1, results) {
+            override fun getView(position: Int, convertView: View?, parent: ViewGroup): View =
+                (super.getView(position, convertView, parent) as TextView).apply {
+                    setTextColor(Ui.TEXT)
+                    textSize = 15f
+                    setPadding(dip(16f), dip(14f), dip(16f), dip(14f))
+                }
+        }
         val list = ListView(this).apply { this.adapter = adapter }
         fun search() {
             val key = keyword.input.text.toString().trim()
@@ -1105,11 +1112,20 @@ class SettingsActivity : Activity() {
         }
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dip(8f), 0, dip(8f), 0)
+            setPadding(dip(12f), dip(4f), dip(12f), 0)
             addView(keyword.view)
             addView(Ui.secondaryButton(this@SettingsActivity, "搜索") { search() })
-            addView(list, LinearLayout.LayoutParams(Ui.MATCH, dip(300f)))
-            addView(Ui.body(this@SettingsActivity, "非ColorOS不保证录屏检测功能正常。"))
+            addView(
+                list,
+                LinearLayout.LayoutParams(Ui.MATCH, dip(300f)).apply { topMargin = dip(12f) }
+            )
+            addView(
+                Ui.body(this@SettingsActivity, "非ColorOS不保证录屏检测功能正常。"),
+                LinearLayout.LayoutParams(Ui.MATCH, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+                    topMargin = dip(10f)
+                    bottomMargin = dip(4f)
+                }
+            )
         }
         val dialog = AlertDialog.Builder(this)
             .setTitle("选择目标录屏应用")
@@ -1117,8 +1133,10 @@ class SettingsActivity : Activity() {
             .setNegativeButton("取消", null)
             .create()
         list.setOnItemClickListener { _, _, pos, _ ->
-            targetEdit.setText(results[pos])
+            val pkg = results[pos]
+            targetEdit.setText(pkg)
             applyTargetFields()
+            toast("已选择 $pkg")
             dialog.dismiss()
         }
         dialog.show()
