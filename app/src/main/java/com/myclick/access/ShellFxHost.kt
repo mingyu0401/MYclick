@@ -8,7 +8,8 @@ import com.myclick.shell.ShellPidFile
 import com.myclick.touch.PrivilegedShell
 
 /**
- * 「Shizuku 模式」宿主：管理那个以 shell 身份运行的绘制进程。
+ * 「Shizuku 模式」与「Root 模式」共用的宿主：管理那个独立运行的绘制进程。
+ * 两种模式的绘制进程完全相同，区别只在于用 Shizuku 还是 su 把它拉起来。
  *
  * 之前的做法是在 App 进程里挂 `TYPE_APPLICATION_OVERLAY` 窗口，ColorOS 会每次
  * 都弹「正在当前页面悬浮显示」。现在把绘制搬到 shell 身份的子进程里，
@@ -36,6 +37,9 @@ object ShellFxHost {
     @Volatile
     private var generation = 0
 
+    /** 当前绘制进程是用哪种运行方式拉起的（Shizuku / Root） */
+    private var runningMode = -1
+
     fun isRunning(): Boolean = handle != null
 
     /** 设置页状态行 */
@@ -57,8 +61,13 @@ object ShellFxHost {
             stopLocked(context, "config off")
             return
         }
+        // 选了哪种就只走哪条提权通道：Root 模式不去碰 Shizuku，反之亦然
+        PrivilegedShell.preferred = backendFor(cfg.runMode)
         val h = handle
-        if (h != null) {
+        if (h != null && runningMode != cfg.runMode) {
+            // Shizuku ↔ Root 切换：旧进程是另一条通道起的，收掉重新拉起
+            stopLocked(context, "run mode ${runningMode} -> ${cfg.runMode}")
+        } else if (h != null) {
             pushConfig(h, cfg)
             return
         }
@@ -73,6 +82,12 @@ object ShellFxHost {
     }
 
     private fun log(msg: String) = Trace.log(appContext, "host", msg)
+
+    private fun backendFor(runMode: Int): PrivilegedShell.Backend? = when (runMode) {
+        Config.RUN_ROOT -> PrivilegedShell.Backend.ROOT
+        Config.RUN_SHIZUKU -> PrivilegedShell.Backend.SHIZUKU
+        else -> null
+    }
 
     @Synchronized
     fun stop(context: Context?) {
@@ -118,7 +133,12 @@ object ShellFxHost {
         )
         val h = PrivilegedShell.open(context, *cmd)
         if (h == null) {
-            Trace.log(context, "host", "提权通道不可用（Shizuku 未授权 / 无 root）")
+            val why = when (PrivilegedShell.preferred) {
+                PrivilegedShell.Backend.ROOT -> "未获得 root 授权"
+                PrivilegedShell.Backend.SHIZUKU -> "Shizuku 未运行或未授权"
+                else -> "Shizuku 未授权 / 无 root"
+            }
+            Trace.log(context, "host", "提权通道不可用（$why）")
             synchronized(this) {
                 starting = false
             }
@@ -136,6 +156,7 @@ object ShellFxHost {
                 return
             }
             handle = h
+            runningMode = lastConfig?.runMode ?: -1
             starting = false
         }
         val cfg = lastConfig

@@ -78,10 +78,15 @@ class SettingsActivity : Activity() {
     private var currentTab = -1
 
     /** 「一键切换」按钮与两套调色板标题，切换后要跟着判定结果更新文案 */
-    private var themeButton: ImageView? = null
+    /** 每个页面标题行里各有一个主题按钮，图标要一起更新 */
+    private val themeButtons = mutableListOf<ImageView>()
     private var themeTransitioning = false
     private var darkPaletteLabel: TextView? = null
     private var lightPaletteLabel: TextView? = null
+
+    /** 首页三张运行方式卡片，以及主卡上「当前：××模式」那一行 */
+    private val modeCards = linkedMapOf<Int, Ui.OptionCard>()
+    private var heroModeView: TextView? = null
 
     private val density: Float get() = resources.displayMetrics.density
 
@@ -94,6 +99,7 @@ class SettingsActivity : Activity() {
             } else {
                 toast("Shizuku 未授权，Shizuku 模式无法工作")
             }
+            refreshModeStatus()
         }
 
     /**
@@ -137,6 +143,8 @@ class SettingsActivity : Activity() {
         // 服务可能被系统回收过，回来时补一次
         if (config.shizukuMode && config.enabled) runCatching { FxService.sync(this) }
         window.decorView.post { requestShizukuPermissionIfNeeded() }
+        // 从 Shizuku / root 管理器授权回来时，卡片状态要跟着更新
+        refreshModeStatus()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -194,24 +202,16 @@ class SettingsActivity : Activity() {
             gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
             bottomMargin = dip(24f)
         })
-        // 主题按钮：三页共用一个，浮在右上角，图标随当前档位变化。
-        // 垂直位置和页面大标题（34sp，上内边距 30dp）的文字中线对齐，
-        // 否则会比「首页」低一截，看着是歪的。
-        root.addView(buildThemeButton(), FrameLayout.LayoutParams(dip(46f), dip(46f)).apply {
-            gravity = Gravity.TOP or Gravity.END
-            topMargin = dip(30f)
-            marginEnd = dip(20f)
-        })
         setContentView(root)
         applySystemBarIcons()
 
         selectTab(savedInstanceState?.getInt(KEY_TAB, 0) ?: 0)
         preview.post { preview.applyConfig(config) }
 
-        // 主题切换重建：把上一实例的界面快照淡出，平滑过渡到新主题
-        ThemeTransition.pending?.let { snapshot ->
+        // 主题切换重建：旧界面快照以主题按钮为圆心收缩 / 扩散，过渡到新主题
+        ThemeTransition.pending?.let { reveal ->
             ThemeTransition.pending = null
-            playThemeFade(snapshot)
+            playThemeReveal(reveal)
         }
     }
 
@@ -433,98 +433,203 @@ class SettingsActivity : Activity() {
 
     private fun buildHomePage(): ScrollView {
         val (scroll, box) = Ui.pageScaffold(this)
-        box.addView(Ui.pageTitle(this, "首页"))
+        box.addView(pageHeader("首页"))
         box.addView(heroCard())
 
-        val row = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            layoutParams = LinearLayout.LayoutParams(Ui.MATCH, Ui.WRAP).apply { topMargin = dip(12f) }
-        }
-        val rootCard = Ui.statusCard(this, "Root 状态", "检测中…")
-        val lspCard = Ui.statusCard(this, "LSPosed 状态", "检测中…")
-        row.addView(rootCard.view)
-        row.addView(View(this).apply { layoutParams = LinearLayout.LayoutParams(dip(12f), 1) })
-        row.addView(lspCard.view)
-        box.addView(row)
-        probeStatus(rootCard.value, lspCard.value)
+        // ---- 运行方式：三种并列、三选一 ----
+        box.addView(Ui.sectionLabel(this, "运行方式 · 三选一"))
+        modeCards[Config.RUN_LSPOSED] = Ui.optionCard(
+            this,
+            "LSPosed 模式",
+            "需要 LSPosed",
+            "由系统框架 Hook 取点击坐标，在录屏 App 里绘制特效。" +
+                "需在 LSPosed 中勾选「系统框架」和录屏 App，重启手机后生效。"
+        ) { onModeCardClicked(Config.RUN_LSPOSED) }
+        modeCards[Config.RUN_SHIZUKU] = Ui.optionCard(
+            this,
+            "Shizuku 模式",
+            "免 root",
+            "由 Shizuku 启动独立绘制进程，直接读取触摸屏，点哪里特效就在哪里。" +
+                "需先在 Shizuku 里启动服务（手机重启后要重新启动）。"
+        ) { onModeCardClicked(Config.RUN_SHIZUKU) }
+        modeCards[Config.RUN_ROOT] = Ui.optionCard(
+            this,
+            "Root 模式",
+            "需要 root",
+            "用 su 直接启动同一个绘制进程，不需要 LSPosed，也不需要 Shizuku。" +
+                "需在 Magisk / KernelSU 等 root 管理器里允许 MYclick。"
+        ) { onModeCardClicked(Config.RUN_ROOT) }
+        modeCards.values.forEach { box.addView(it.view) }
+        box.addView(Ui.body(this, "同一时间只会有一种方式在工作，切换后另外两种会自动停用，不会出现两份特效。"))
+        updateModeSelection()
+        refreshModeStatus()
 
-        box.addView(Ui.sectionLabel(this, "设备信息"))
+        // ---- 常用开关 ----
+        box.addView(Ui.sectionLabel(this, "常用开关"))
         box.addView(
             Ui.group(
                 this,
-                Ui.infoRow(this, "设备型号", Build.MODEL).view,
-                Ui.infoRow(this, "Android / API", "Android ${Build.VERSION.RELEASE} / API ${Build.VERSION.SDK_INT}").view,
-                Ui.infoRow(this, "系统版本", Build.DISPLAY).view,
-                Ui.infoRow(this, "系统架构", Build.SUPPORTED_ABIS.firstOrNull() ?: "unknown").view,
-                Ui.infoRow(this, "目标应用", config.targetPackage).view
-            )
-        )
-
-        box.addView(Ui.sectionLabel(this, "快速设置"))
-        box.addView(
-            Ui.group(
-                this,
-                Ui.switchRow(this, "启用特效", "关闭后所有 Hook 直接跳过", config.enabled) {
+                Ui.switchRow(this, "启用特效", "总开关，关闭后任何方式都不再显示特效", config.enabled) {
                     config = config.copy(enabled = it); save()
-                },
-                Ui.switchRow(this, "隐藏系统原生触摸圆点", "把 show_touches 钳为 0", config.hideNativeDot) {
-                    config = config.copy(hideNativeDot = it); save()
+                    refreshModeStatus()
                 },
                 Ui.switchRow(
                     this,
                     "全局生效",
-                    "全局显示可能会厌烦，慎重打开",
+                    "不录屏时也显示特效，慎重打开",
                     config.globalEffect,
                     confirmOnEnable = "开启后，即使没有在录屏，每次点击屏幕也会出现特效。" +
                         "\n\n全局显示可能会厌烦，慎重打开。（默认仅录屏时显示）"
                 ) {
                     config = config.copy(globalEffect = it); save()
-                }.also { globalRows += it }
-            )
-        )
-        box.addView(Ui.body(this, "⚠ 全局显示可能会厌烦，慎重打开；默认关闭，仅在录屏时显示特效。"))
-
-        box.addView(Ui.sectionLabel(this, "免 Xposed 模式"))
-        box.addView(
-            Ui.group(
-                this,
-                Ui.switchRow(
-                    this,
-                    "Shizuku 模式",
-                    "不需要 root，读触摸屏拿真实坐标",
-                    config.shizukuMode,
-                    confirmOnEnable = "Shizuku 模式以 shell 身份读取触摸屏事件，拿到的是真实触摸坐标：" +
-                        "\n· 点空白处、游戏、视频全屏控件都能出特效" +
-                        "\n· 位置就是手指按下的地方，不会偏移" +
-                        "\n\n前提：已安装 Shizuku 并激活（无线调试或 root 均可，手机重启后需要重新激活）。"
-                ) {
-                    config = config.copy(shizukuMode = it); save()
-                    if (it) afterShizukuEnabled()
+                }.also { globalRows += it },
+                Ui.switchRow(this, "隐藏系统触摸圆点", "录屏时不再显示系统自带的白色圆点", config.hideNativeDot) {
+                    config = config.copy(hideNativeDot = it); save()
                 }
             )
         )
+
+        // ---- 设备信息 ----
+        box.addView(Ui.sectionLabel(this, "设备信息"))
         box.addView(
-            Ui.actionRow(this, "Shizuku 状态", PrivilegedShell.describe()) {
-                if (!requestShizukuPermissionIfNeeded()) openShizuku()
-            }
-        )
-        box.addView(
-            Ui.body(this, "开启后，「全局生效」和录屏内特效会自动让位，避免两份特效叠在一起。")
+            Ui.group(
+                this,
+                Ui.infoRow(this, "设备型号", Build.MODEL).view,
+                Ui.infoRow(this, "系统版本", "Android ${Build.VERSION.RELEASE}（API ${Build.VERSION.SDK_INT}）").view,
+                Ui.infoRow(this, "系统构建", Build.DISPLAY).view,
+                Ui.infoRow(this, "目标录屏应用", config.targetPackage).view
+            )
         )
 
-        box.addView(Ui.primaryButton(this, "保存并推送配置") {
+        box.addView(Ui.secondaryButton(this, "重新推送配置") {
             applyTargetFields()
             TouchRelay.sendConfig(this, config)
-            toast("已保存并广播配置")
+            toast("已重新推送配置")
         })
         box.addView(
             Ui.body(
                 this,
-                "修改任意配置都会即时写入并广播。系统框架 Hook 需要在 LSPosed 中勾选「系统框架」并重启后生效；\n" +
-                    "录屏启动时不能再往 AUTO_MIRROR 虚拟屏添加窗口，否则 MediaProjection 会拿到全黑画面。"
+                "修改任何设置都会自动保存并生效。只有 LSPosed 模式下系统框架没收到新配置时，才需要手动重新推送。"
             )
         )
         return scroll
+    }
+
+    // ---------------- 运行方式 ----------------
+
+    private fun runModeName(mode: Int): String = when (mode) {
+        Config.RUN_SHIZUKU -> "Shizuku 模式"
+        Config.RUN_ROOT -> "Root 模式"
+        else -> "LSPosed 模式"
+    }
+
+    private fun updateModeSelection() {
+        modeCards.forEach { (mode, card) -> card.setSelected(mode == config.runMode) }
+        heroModeView?.text = "当前：${runModeName(config.runMode)}"
+    }
+
+    /**
+     * 点模式卡片：没选中就切过去；已经选中且条件未满足时，再点一次就重新尝试授权。
+     */
+    private fun onModeCardClicked(mode: Int) {
+        if (mode != config.runMode) {
+            config = config.withRunMode(mode)
+            save()
+            updateModeSelection()
+        }
+        when (mode) {
+            Config.RUN_SHIZUKU -> afterShizukuEnabled()
+            Config.RUN_ROOT -> afterRootEnabled()
+            else -> afterLsposedSelected()
+        }
+        refreshModeStatus()
+    }
+
+    /**
+     * 后台探测三种方式的可用性，刷新卡片底部的状态行。
+     *
+     * `su` 可能弹 root 授权框并阻塞、LSPosed 目录要 root 才能看，全都放后台线程。
+     */
+    private fun refreshModeStatus() {
+        if (modeCards.isEmpty()) return
+        val cfg = config
+        Thread {
+            val lspManager = runCatching {
+                packageManager.getPackageInfo("org.lsposed.manager", 0) != null
+            }.getOrDefault(false)
+            val rootOk = PrivilegedShell.rootReady()
+            val lspDir = rootOk &&
+                RootHelper.su("test -d /data/adb/lspd && echo yes")?.contains("yes") == true
+            val lsposed = lspManager || lspDir
+            val shizukuOk = PrivilegedShell.shizukuReady()
+            val shizukuGrant = PrivilegedShell.shizukuNeedsGrant()
+            val hostRunning = ShellFxHost.isRunning()
+            runOnUiThread {
+                if (isFinishing || isDestroyed) return@runOnUiThread
+                // 只在当前选中的那张卡片上追加运行情况
+                fun extra(mode: Int): String = when {
+                    cfg.runMode != mode -> ""
+                    !cfg.enabled -> " · 特效总开关已关闭"
+                    mode != Config.RUN_LSPOSED && hostRunning -> " · 绘制进程运行中"
+                    else -> ""
+                }
+                modeCards[Config.RUN_LSPOSED]?.setStatus(
+                    if (lsposed) "● 已检测到 LSPosed" + extra(Config.RUN_LSPOSED)
+                    else "● 未检测到 LSPosed",
+                    lsposed
+                )
+                modeCards[Config.RUN_SHIZUKU]?.setStatus(
+                    when {
+                        shizukuOk -> "● Shizuku 已授权" + extra(Config.RUN_SHIZUKU)
+                        shizukuGrant -> "● Shizuku 未授权，点此卡片申请"
+                        else -> "● Shizuku 未运行，点此卡片打开 Shizuku"
+                    },
+                    shizukuOk
+                )
+                modeCards[Config.RUN_ROOT]?.setStatus(
+                    if (rootOk) "● 已获得 root" + extra(Config.RUN_ROOT)
+                    else "● 未获得 root，点此卡片重新申请",
+                    rootOk
+                )
+            }
+        }.start()
+    }
+
+    /** 切到 LSPosed 模式：独立绘制进程已由 save() 停掉，这里只提示生效条件 */
+    private fun afterLsposedSelected() {
+        toast("已切换到 LSPosed 模式（需在 LSPosed 勾选系统框架与录屏 App 并重启）")
+    }
+
+    /**
+     * 切到 Root 模式后的引导。
+     *
+     * 探测放后台：`su` 会弹 root 授权框并一直等用户点，放主线程就是 ANR。
+     * 授权成功直接拉起绘制进程；被拒绝就说明怎么去 root 管理器里放行。
+     */
+    private fun afterRootEnabled() {
+        Thread {
+            val ok = PrivilegedShell.rootReady()
+            runOnUiThread {
+                if (isFinishing || isDestroyed) return@runOnUiThread
+                if (ok) {
+                    runCatching { ShellFxHost.sync(this, config) }
+                    runCatching { FxService.sync(this) }
+                    toast("Root 模式已启动")
+                } else {
+                    AlertDialog.Builder(this)
+                        .setTitle("没有拿到 root 授权")
+                        .setMessage(
+                            "Root 模式需要 root 权限来启动绘制进程。\n\n" +
+                                "请在 Magisk / KernelSU / APatch 等 root 管理器里允许 MYclick，" +
+                                "然后回到这里再点一次「Root 模式」卡片。\n\n" +
+                                "手机没有 root 的话，可以改用「Shizuku 模式」。"
+                        )
+                        .setPositiveButton("知道了", null)
+                        .show()
+                }
+                refreshModeStatus()
+            }
+        }.start()
     }
 
     private fun heroCard(): FrameLayout = FrameLayout(this).apply {
@@ -535,12 +640,20 @@ class SettingsActivity : Activity() {
 
         // 与桌面 App 图标共用同一个 vector，圆形裁切后自然融入主卡。
         // 圆形裁切放在 Drawable 里逐帧做，避免重建后 outline 未就绪时露出方形底。
+        val icon = CircleClipDrawable(resources.getDrawable(R.drawable.ic_launcher, theme).mutate())
         addView(
             ImageView(this@SettingsActivity).apply {
-                setImageDrawable(
-                    CircleClipDrawable(resources.getDrawable(R.drawable.ic_launcher, theme).mutate())
-                )
+                setImageDrawable(icon)
                 scaleType = ImageView.ScaleType.FIT_CENTER
+                // 长按：内部图形加速旋转，松手后慢慢停下
+                isLongClickable = true
+                setOnLongClickListener { icon.setHolding(true); true }
+                setOnTouchListener { _, e ->
+                    if (e.actionMasked == MotionEvent.ACTION_UP || e.actionMasked == MotionEvent.ACTION_CANCEL) {
+                        icon.setHolding(false)
+                    }
+                    false
+                }
             },
             FrameLayout.LayoutParams(dip(132f), dip(132f), Gravity.END or Gravity.CENTER_VERTICAL).apply {
                 rightMargin = dip(16f)
@@ -565,36 +678,20 @@ class SettingsActivity : Activity() {
                 setPadding(0, dip(10f), 0, 0)
             })
             addView(TextView(this@SettingsActivity).apply {
-                text = "BASpark 点击特效 · LSPosed 模块"
+                text = "当前：${runModeName(config.runMode)}"
                 textSize = 14f
                 setTextColor(Color.parseColor("#D3DBE5"))
                 setPadding(0, dip(4f), 0, 0)
-            })
+            }.also { heroModeView = it })
         }
         addView(texts)
-    }
-
-    private fun probeStatus(rootView: TextView, lspView: TextView) {
-        Thread {
-            val hasRoot = RootHelper.isRootAvailable()
-            val hasManager = runCatching {
-                packageManager.getPackageInfo("org.lsposed.manager", 0) != null
-            }.getOrDefault(false)
-            val hasLspdDir = RootHelper.su("test -d /data/adb/lspd && echo yes")?.contains("yes") == true
-            val lsposed = hasManager || hasLspdDir
-            runOnUiThread {
-                if (isFinishing || isDestroyed) return@runOnUiThread
-                rootView.text = if (hasRoot) "可用 (su)" else "不可用 · 纯 Xposed 也可工作"
-                lspView.text = if (lsposed) "已启用 · 重启生效" else "未检测到 · 请检查作用域"
-            }
-        }.start()
     }
 
     // ---------------- 特效页 ----------------
 
     private fun buildFxPage(): ScrollView {
         val (scroll, box) = Ui.pageScaffold(this)
-        box.addView(Ui.pageTitle(this, "特效"))
+        box.addView(pageHeader("特效"))
 
         box.addView(Ui.sectionLabel(this, "实时预览 · 点一下试试"))
         val previewCard = FrameLayout(this).apply {
@@ -699,7 +796,7 @@ class SettingsActivity : Activity() {
 
     private fun buildAboutPage(): ScrollView {
         val (scroll, box) = Ui.pageScaffold(this)
-        box.addView(Ui.pageTitle(this, "关于"))
+        box.addView(pageHeader("关于"))
 
         val imageCard = FrameLayout(this).apply {
             background = Ui.cardBg(this@SettingsActivity, Ui.CARD, 24f)
@@ -766,7 +863,26 @@ class SettingsActivity : Activity() {
     private fun effectiveDark(): Boolean = config.isDark(NightMode.isDark(this))
 
     /**
-     * 右上角主题按钮：点一次按「跟随系统 → 强制深色 → 强制浅色」循环。
+     * 页面标题行：左边大标题，右边主题按钮。
+     *
+     * 按钮放在每个页面自己的内容里，随页面一起滚动，而不是钉在整屏右上角。
+     * 垂直位置与标题文字对齐：按钮顶端和标题的上内边距（30dp）齐平。
+     */
+    private fun pageHeader(title: String): View = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        layoutParams = LinearLayout.LayoutParams(Ui.MATCH, Ui.WRAP)
+        addView(Ui.pageTitle(this@SettingsActivity, title).apply {
+            layoutParams = LinearLayout.LayoutParams(0, Ui.WRAP, 1f)
+        })
+        addView(buildThemeButton().apply {
+            layoutParams = LinearLayout.LayoutParams(dip(46f), dip(46f)).apply {
+                topMargin = dip(30f)
+            }
+        })
+    }
+
+    /**
+     * 主题按钮：点一次按「跟随系统 → 强制深色 → 强制浅色」循环。
      * 图标直接反映当前档位（半明半暗圆 / 月牙 / 太阳），一眼看出现在是什么模式。
      */
     private fun buildThemeButton(): ImageView {
@@ -776,14 +892,14 @@ class SettingsActivity : Activity() {
             background = Ui.cardBg(this@SettingsActivity, Ui.CARD, 23f)
             elevation = dip(8f).toFloat()
             setPadding(dip(11f), dip(11f), dip(11f), dip(11f))
-            setOnClickListener { cycleThemeMode() }
+            setOnClickListener { cycleThemeMode(it) }
         }
-        themeButton = btn
+        themeButtons += btn
         updateThemeButtonIcon()
         return btn
     }
 
-    private fun cycleThemeMode() {
+    private fun cycleThemeMode(anchor: View) {
         // 过渡进行中再点会叠出多层遮罩，直接忽略
         if (themeTransitioning) return
         themeTransitioning = true
@@ -792,13 +908,27 @@ class SettingsActivity : Activity() {
             Config.THEME_DARK -> Config.THEME_LIGHT
             else -> Config.THEME_FOLLOW_SYSTEM
         }
+        // 先拍旧界面：save() 会刷新按钮图标和调色板标题，快照里要保留旧主题的样子
+        val fromDark = Ui.isDark
+        val snapshot = captureWindow()
         NightMode.invalidate()
         config = config.copy(themeMode = next)
         save()
 
-        // 先给当前界面拍一张快照：重建后新实例把它铺在上面慢慢淡出，
-        // 视觉上就是一整屏颜色平滑过渡到新主题。
-        ThemeTransition.pending = captureWindow()
+        // 明暗真的变了才做圆形过渡，圆心取主题按钮在窗口里的中心
+        val toDark = effectiveDark()
+        if (snapshot != null && toDark != fromDark) {
+            val loc = IntArray(2).also { anchor.getLocationInWindow(it) }
+            ThemeTransition.pending = ThemeTransition.Reveal(
+                snapshot = snapshot,
+                cx = loc[0] + anchor.width / 2f,
+                cy = loc[1] + anchor.height / 2f,
+                startRadius = anchor.width / 2f,
+                toDark = toDark,
+            )
+        } else {
+            snapshot?.recycle()
+        }
         recreate()
         @Suppress("DEPRECATION")
         overridePendingTransition(0, 0)
@@ -813,25 +943,13 @@ class SettingsActivity : Activity() {
         }
     }.getOrNull()
 
-    /** 新实例启动后：旧界面快照淡出，露出已经换成新主题的界面 */
-    private fun playThemeFade(snapshot: Bitmap) {
-        val host = window.decorView as? ViewGroup ?: run { snapshot.recycle(); return }
-        val overlay = ImageView(this).apply {
-            setImageBitmap(snapshot)
-            scaleType = ImageView.ScaleType.FIT_XY
-            isClickable = false
-            isFocusable = false
+    /** 新实例启动后：旧界面快照以主题按钮为圆心做圆形过渡，露出已经换成新主题的界面 */
+    private fun playThemeReveal(reveal: ThemeTransition.Reveal) {
+        val host = window.decorView as? ViewGroup ?: run { reveal.snapshot.recycle(); return }
+        ThemeRevealView(this, reveal).also {
+            host.addView(it, ViewGroup.LayoutParams(Ui.MATCH, Ui.MATCH))
+            it.play()
         }
-        host.addView(overlay, ViewGroup.LayoutParams(Ui.MATCH, Ui.MATCH))
-        overlay.animate()
-            .alpha(0f)
-            .setDuration(360)
-            .setInterpolator(DecelerateInterpolator())
-            .withEndAction {
-                (overlay.parent as? ViewGroup)?.removeView(overlay)
-                snapshot.recycle()
-            }
-            .start()
     }
 
     private fun updateThemeButtonIcon() {
@@ -840,14 +958,15 @@ class SettingsActivity : Activity() {
             Config.THEME_LIGHT -> R.drawable.ic_theme_light
             else -> R.drawable.ic_theme_auto
         }
-        themeButton?.let {
+        val desc = when (config.themeMode) {
+            Config.THEME_DARK -> "主题：强制深色"
+            Config.THEME_LIGHT -> "主题：强制浅色"
+            else -> "主题：跟随系统"
+        }
+        themeButtons.forEach {
             it.setImageResource(res)
             it.setColorFilter(Ui.TEXT)
-            it.contentDescription = when (config.themeMode) {
-                Config.THEME_DARK -> "主题：强制深色"
-                Config.THEME_LIGHT -> "主题：强制浅色"
-                else -> "主题：跟随系统"
-            }
+            it.contentDescription = desc
         }
     }
 
@@ -974,9 +1093,11 @@ class SettingsActivity : Activity() {
      * 打开 Shizuku 模式后的引导。
      *
      * 三条状态分开处理，避免用户开了开关却毫无反应：
-     *  - Shizuku 已授权 → 直接启动事件源
+     *  - Shizuku 已授权 → 直接启动绘制进程
      *  - Shizuku 在跑但没授权本应用 → 弹系统授权框
-     *  - 完全不可用 → 引导安装 / 激活，或者用 root
+     *  - 没在运行 → 引导安装 / 启动；有 root 的用户建议改选 Root 模式
+     *
+     * 这里不再悄悄退回 su：用户选的是哪种方式，就只用哪种。
      *
      * 探测必须放后台：`su` 可能弹出 root 授权框并一直等，放在主线程就是一次 ANR。
      */
@@ -1002,20 +1123,15 @@ class SettingsActivity : Activity() {
                         ShellFxHost.sync(this, config)
                         toast("Shizuku 模式已启动：$desc")
                     }
-                    backend == PrivilegedShell.Backend.ROOT -> {
-                        // 没有运行中的 Shizuku 但有 root：直接走 su
-                        ShellFxHost.sync(this, config)
-                        toast("已通过 Root 启动触摸监听")
-                    }
                     else -> {
                         AlertDialog.Builder(this)
-                            .setTitle("还不能用")
+                            .setTitle("Shizuku 还没启动")
                             .setMessage(
-                                "Shizuku 模式需要 Shizuku 或 root。\n\n" +
+                                "Shizuku 模式需要 Shizuku 服务正在运行。\n\n" +
                                     "· 已装 Shizuku：打开它，用「无线调试」或「root」启动服务，" +
-                                    "然后回到这里重新打开开关\n" +
-                                    "· 没装 Shizuku：装好后按上面步骤激活\n\n" +
-                                    "如果不想折腾，可以关掉这个开关，改用「纯悬浮窗模式」（无障碍）。"
+                                    "再回到这里点一次「Shizuku 模式」卡片\n" +
+                                    "· 没装 Shizuku：装好后按上面步骤启动\n\n" +
+                                    "手机已经 root 的话，可以直接选「Root 模式」，不需要 Shizuku。"
                             )
                             .setPositiveButton("打开 Shizuku") { _, _ -> openShizuku() }
                             .setNegativeButton("知道了", null)
@@ -1032,7 +1148,8 @@ class SettingsActivity : Activity() {
      */
     private fun requestShizukuPermissionIfNeeded(): Boolean {
         if (shizukuPermissionPrompted) return false
-        if (!::config.isInitialized || !config.enabled || !config.shizukuMode) return false
+        // 只有选了 Shizuku 模式才去申请；Root 模式用户不该被 Shizuku 弹窗打扰
+        if (!::config.isInitialized || !config.enabled || config.runMode != Config.RUN_SHIZUKU) return false
         if (!PrivilegedShell.shizukuNeedsGrant()) return false
         shizukuPermissionPrompted = true
         val requested = PrivilegedShell.requestShizukuPermission()

@@ -59,6 +59,10 @@ object Ui {
     val SWITCH_TRACK_OFF: Int get() = pick(0x33FFFFFF, 0x22000000)
     val SWITCH_TRACK_ON: Int get() = pick(0x66F9A86C, 0x66E07A3F)
 
+    /** 状态文字：条件已满足 / 需要用户处理 */
+    val OK: Int get() = pick(0xFF7FD69A.toInt(), 0xFF2E8B57.toInt())
+    val WARN: Int get() = pick(0xFFF2C46B.toInt(), 0xFFB26A00.toInt())
+
     const val MATCH = LinearLayout.LayoutParams.MATCH_PARENT
     const val WRAP = LinearLayout.LayoutParams.WRAP_CONTENT
 
@@ -470,6 +474,121 @@ object Ui {
         setPadding(ctx.dip(16f), ctx.dip(14f), ctx.dip(16f), ctx.dip(14f))
         setOnClickListener { onClick() }
         layoutParams = LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = ctx.dip(10f) }
+    }
+
+    /**
+     * 三选一的大卡片：左侧单选圆点，右侧「标题 + 标签 / 说明 / 实时状态」。
+     *
+     * 选中时卡片描一圈强调色边、圆点填实；[setStatus] 用来刷新底部那行检测结果。
+     */
+    class OptionCard(
+        val view: LinearLayout,
+        val setSelected: (Boolean) -> Unit,
+        val setStatus: (text: String, ok: Boolean?) -> Unit
+    )
+
+    fun optionCard(
+        ctx: Context,
+        title: String,
+        tag: String,
+        desc: String,
+        onClick: () -> Unit
+    ): OptionCard {
+        val radius = ctx.dip(22f).toFloat()
+        val bg = GradientDrawable().apply {
+            setColor(CARD)
+            cornerRadius = radius
+        }
+        val ring = GradientDrawable().apply { shape = GradientDrawable.OVAL }
+        val dot = View(ctx).apply {
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(ACCENT)
+            }
+        }
+        val indicator = FrameLayout(ctx).apply {
+            background = ring
+            addView(dot, FrameLayout.LayoutParams(ctx.dip(10f), ctx.dip(10f), Gravity.CENTER))
+            layoutParams = LinearLayout.LayoutParams(ctx.dip(22f), ctx.dip(22f)).apply {
+                topMargin = ctx.dip(2f)
+                marginEnd = ctx.dip(14f)
+            }
+        }
+        val status = TextView(ctx).apply {
+            text = "检测中…"
+            textSize = 13f
+            setTextColor(SUB)
+            setTypeface(typeface, Typeface.BOLD)
+            setPadding(0, ctx.dip(10f), 0, 0)
+        }
+        val texts = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, WRAP, 1f)
+            addView(LinearLayout(ctx).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                addView(rowTitle(ctx, title))
+                addView(TextView(ctx).apply {
+                    text = tag
+                    textSize = 11f
+                    setTextColor(SUB)
+                    setTypeface(typeface, Typeface.BOLD)
+                    background = cardBg(ctx, CHIP, 8f)
+                    setPadding(ctx.dip(8f), ctx.dip(3f), ctx.dip(8f), ctx.dip(3f))
+                    layoutParams = LinearLayout.LayoutParams(WRAP, WRAP).apply {
+                        marginStart = ctx.dip(10f)
+                    }
+                })
+            })
+            addView(TextView(ctx).apply {
+                text = desc
+                textSize = 13f
+                setTextColor(SUB)
+                setLineSpacing(ctx.dip(2f).toFloat(), 1f)
+                setPadding(0, ctx.dip(6f), 0, 0)
+            })
+            addView(status)
+        }
+        val card = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            background = bg
+            foreground = RippleDrawable(
+                ColorStateList.valueOf(RIPPLE),
+                null,
+                GradientDrawable().apply {
+                    setColor(Color.WHITE)
+                    cornerRadius = radius
+                }
+            )
+            isClickable = true
+            isFocusable = true
+            setPadding(ctx.dip(18f), ctx.dip(16f), ctx.dip(18f), ctx.dip(16f))
+            layoutParams = LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = ctx.dip(10f) }
+            addView(indicator)
+            addView(texts)
+            setOnClickListener { onClick() }
+        }
+        val stroke = ctx.dip(2f)
+        fun select(on: Boolean) {
+            bg.setStroke(stroke, if (on) ACCENT else Color.TRANSPARENT)
+            ring.setStroke(stroke, if (on) ACCENT else SUB)
+            dot.visibility = if (on) View.VISIBLE else View.INVISIBLE
+        }
+        select(false)
+        return OptionCard(
+            view = card,
+            setSelected = { select(it) },
+            setStatus = { text, ok ->
+                status.text = text
+                status.setTextColor(
+                    when (ok) {
+                        true -> OK
+                        false -> WARN
+                        null -> SUB
+                    }
+                )
+            }
+        )
     }
 
     class StatusCard(val view: LinearLayout, val value: TextView)

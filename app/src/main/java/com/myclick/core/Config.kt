@@ -14,7 +14,15 @@ data class Config(
     val touchSource: Int = SOURCE_AUTO,
     val gateMode: Int = GATE_AUTO,
     val globalEffect: Boolean = false,       // 全局生效：未录屏时也显示点击特效（默认关闭）
-    val shizukuMode: Boolean = false,        // Shizuku 模式：以 shell 身份读触摸屏设备，拿真实坐标（默认关闭）
+    /**
+     * 是否由独立绘制进程（Shizuku 或 Root 启动的 app_process）承接特效。
+     *
+     * 字段名沿用旧版本：system_server 里的 Hook 代码要重启才会更新，仍按这个键判断
+     * 是否让位。它始终等于 `runMode != RUN_LSPOSED`，只通过 [withRunMode] 修改。
+     */
+    val shizukuMode: Boolean = false,
+    /** 运行方式：[RUN_LSPOSED] / [RUN_SHIZUKU] / [RUN_ROOT]，三选一 */
+    val runMode: Int = RUN_LSPOSED,
     val hideNativeDot: Boolean = true,       // 强制 show_touches=0，隐藏原生白点
     val dprCapEnabled: Boolean = true,       // DPR 上限 2x
     val targetPackage: String = DEFAULT_TARGET,
@@ -49,6 +57,15 @@ data class Config(
         const val GATE_AUTO = 0
         const val GATE_ALWAYS = 1
 
+        /** LSPosed 模式：系统框架 Hook 取坐标，录屏进程里挂悬浮窗绘制 */
+        const val RUN_LSPOSED = 0
+
+        /** Shizuku 模式：免 root，Shizuku 以 shell 身份启动独立绘制进程 */
+        const val RUN_SHIZUKU = 1
+
+        /** Root 模式：免 LSPosed / Shizuku，直接用 su 启动同一个独立绘制进程 */
+        const val RUN_ROOT = 2
+
         /** 已知 ColorOS / 一加 / OPPO 各分支屏录包名，用于降级探测 */
         val KNOWN_TARGETS = listOf(
             "com.oplus.screenrecorder",
@@ -63,6 +80,11 @@ data class Config(
 
         fun fromBundle(b: Bundle): Config {
             val d = default()
+            val shizuku = b.getBoolean("shizukuMode", d.shizukuMode)
+            // 旧配置没有 runMode：开着 Shizuku 开关就是 Shizuku 模式，否则是 LSPosed 模式
+            val mode = if (b.containsKey("runMode")) {
+                b.getInt("runMode").coerceIn(RUN_LSPOSED, RUN_ROOT)
+            } else if (shizuku) RUN_SHIZUKU else RUN_LSPOSED
             return Config(
                 enabled = b.getBoolean("enabled", d.enabled),
                 scale = b.getFloat("scale", d.scale),
@@ -71,7 +93,8 @@ data class Config(
                 touchSource = b.getInt("touchSource", d.touchSource),
                 gateMode = b.getInt("gateMode", d.gateMode),
                 globalEffect = b.getBoolean("globalEffect", d.globalEffect),
-                shizukuMode = b.getBoolean("shizukuMode", d.shizukuMode),
+                shizukuMode = mode != RUN_LSPOSED,
+                runMode = mode,
                 hideNativeDot = b.getBoolean("hideNativeDot", d.hideNativeDot),
                 dprCapEnabled = b.getBoolean("dprCapEnabled", d.dprCapEnabled),
                 targetPackage = b.getString("targetPackage") ?: d.targetPackage,
@@ -98,6 +121,7 @@ data class Config(
         putInt("gateMode", gateMode)
         putBoolean("globalEffect", globalEffect)
         putBoolean("shizukuMode", shizukuMode)
+        putInt("runMode", runMode)
         putBoolean("hideNativeDot", hideNativeDot)
         putBoolean("dprCapEnabled", dprCapEnabled)
         putString("targetPackage", targetPackage)
@@ -132,6 +156,10 @@ data class Config(
      * 此时框架 / 录屏 / 全局三条通道都必须让位，否则会叠画。
      */
     fun usesLocalHost(): Boolean = shizukuMode
+
+    /** 切换运行方式；同时维护兼容字段 [shizukuMode] */
+    fun withRunMode(mode: Int): Config =
+        copy(runMode = mode, shizukuMode = mode != RUN_LSPOSED)
 
     fun palette(dark: Boolean): Palette = if (dark) {
         Palette(darkFill, darkArcStart, darkArcEnd, darkSpark)

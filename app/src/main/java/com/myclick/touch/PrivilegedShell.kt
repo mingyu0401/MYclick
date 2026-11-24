@@ -15,16 +15,22 @@ import java.io.InputStream
  * `root:input`，而 shell 用户正好在 `input` 组里，所以只要有 shell 身份就够了，
  * 不需要 root。
  *
- * 两条通道，按优先级：
+ * 两条通道：
  *  1. **Shizuku**：`IShizukuService.newProcess()` 直接给一个以 shell 运行的进程。
  *     注意 `Shizuku.newProcess()` 在 13.x 已改为 private，所以这里直接拿 binder 调接口。
  *  2. **su**：设备已 root 时直接 `su -c`，零配置。
  *
- * 都不可用时返回 NONE，由上层明确提示，不做静默降级。
+ * 用户在首页选了 Shizuku 模式或 Root 模式后，[preferred] 会被设成对应通道，
+ * 只走那一条：选了哪种就用哪种，不在两者之间静默切换。未指定时按上面的顺序。
+ * 都不可用时返回 NONE，由上层明确提示。
  */
 object PrivilegedShell {
 
     enum class Backend { SHIZUKU, ROOT, NONE }
+
+    /** 用户选定的通道；null 表示自动（Shizuku 优先，其次 root） */
+    @Volatile
+    var preferred: Backend? = null
 
     /** 统一的进程句柄：Shizuku 的远端进程和本地 su 进程都能包成它 */
     class Handle(
@@ -64,9 +70,15 @@ object PrivilegedShell {
         Shizuku.pingBinder() && Shizuku.checkSelfPermission() != PackageManager.PERMISSION_GRANTED
     }.getOrDefault(false)
 
-    /** su 是否可用；只探测一次，避免每次点击都 fork */
+    /**
+     * su 是否可用；结果会缓存，避免每次 fork。
+     *
+     * 只缓存「可用」：用户第一次在 Magisk / KernelSU 里点了拒绝或超时，
+     * 之后去授权了也要能重新探测到，不能一直卡在「不可用」。
+     * 可能弹 root 授权框并阻塞，必须在后台线程调用。
+     */
     fun rootReady(): Boolean {
-        if (rootChecked) return rootAvailable
+        if (rootChecked && rootAvailable) return true
         rootChecked = true
         rootAvailable = runCatching {
             val p = ProcessBuilder("su", "-c", "id").redirectErrorStream(true).start()
@@ -77,10 +89,14 @@ object PrivilegedShell {
         return rootAvailable
     }
 
-    fun backend(): Backend = when {
-        shizukuReady() -> Backend.SHIZUKU
-        rootReady() -> Backend.ROOT
-        else -> Backend.NONE
+    fun backend(): Backend = when (preferred) {
+        Backend.SHIZUKU -> if (shizukuReady()) Backend.SHIZUKU else Backend.NONE
+        Backend.ROOT -> if (rootReady()) Backend.ROOT else Backend.NONE
+        else -> when {
+            shizukuReady() -> Backend.SHIZUKU
+            rootReady() -> Backend.ROOT
+            else -> Backend.NONE
+        }
     }
 
     fun describe(): String = when {
@@ -88,6 +104,32 @@ object PrivilegedShell {
         shizukuNeedsGrant() -> "Shizuku 未授权（点击申请）"
         rootReady() -> "Root 可用"
         else -> "不可用（需要 Shizuku 或 root）"
+    }
+
+    /** 把参数逐个包进单引号，交给 `su -c` 时路径里的特殊字符不会被 shell 解释 */
+    private fun shellJoin(cmd: Array<out String>): String =
+        cmd.joinToString(" ") { "'" + it.replace("'", "'\\''") + "'" }
+
+    /**
+     * su 进程的 stderr 必须有人读。
+     *
+     * 绘制进程是常驻的，`app_process` / 运行时的告警都写 stderr；没人读的话管道
+     * 写满（约 64KB）后子进程会卡在 write 上，表现为特效突然全停。
+     */
+    private fun drainStderr(context: Context?, p: Process) {
+        Thread({
+            runCatching {
+                p.errorStream.bufferedReader().use { r ->
+                    while (true) {
+                        val line = r.readLine() ?: break
+                        Trace.log(context, "shell", "su stderr: $line")
+                    }
+                }
+            }
+        }, "MYclick-su-stderr").apply {
+            isDaemon = true
+            start()
+        }
     }
 
     fun requestShizukuPermission(requestCode: Int = 4201): Boolean = runCatching {
@@ -111,9 +153,10 @@ object PrivilegedShell {
                     Handle(stream, sink, { rp.destroy() }, { rp.waitFor() })
                 }
                 Backend.ROOT -> {
-                    val p = ProcessBuilder("su", "-c", cmd.joinToString(" "))
+                    val p = ProcessBuilder("su", "-c", shellJoin(cmd))
                         .redirectErrorStream(false)
                         .start()
+                    drainStderr(context, p)
                     Trace.log(context, "shell", "root open ${cmd.joinToString(" ")}")
                     Handle(p.inputStream, p.outputStream, { p.destroy() }, { p.waitFor() })
                 }
@@ -165,6 +208,7 @@ object PrivilegedShell {
                     val p = ProcessBuilder("su", "-c", "sh -c '$quoted'")
                         .redirectErrorStream(false)
                         .start()
+                    drainStderr(context, p)
                     Handle(p.inputStream, p.outputStream, { p.destroy() }, { p.waitFor() })
                 }
                 Backend.NONE -> null
