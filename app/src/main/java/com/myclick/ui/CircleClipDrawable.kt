@@ -30,7 +30,7 @@ internal class CircleClipDrawable(private val inner: Drawable) : Drawable() {
     private var spinning = false  // 逐帧回调是否在跑
     private var lastFrame = 0L
 
-    private val frame = Runnable {
+    private val frame: Runnable = Runnable {
         val now = SystemClock.uptimeMillis()
         val dt = min(now - lastFrame, MAX_STEP_MS) / 1000f
         lastFrame = now
